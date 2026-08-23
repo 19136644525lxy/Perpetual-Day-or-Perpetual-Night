@@ -1,0 +1,15 @@
+{
+	"required": true,
+	"package": "yifei.pdopn.mixin",
+	"compatibilityLevel": "JAVA_17",
+	"mixins": [
+			"PotionItemMixin",
+			"BucketItemMixin"
+		],
+	"injectors": {
+		"defaultRequire": 1
+	},
+	"overwrites": {
+		"requireAnnotations": true
+	}
+}

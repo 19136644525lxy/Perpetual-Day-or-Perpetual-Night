@@ -1,0 +1,39 @@
+{
+  "pdopn.mode.day": "Perpetual Day",
+  "pdopn.mode.night": "Perpetual Night",
+  "pdopn.mode.normal": "Normal",
+
+  "pdopn.feedback.current_mode": "Current mode: ",
+  "pdopn.feedback.already_normal": "Already in normal day/night cycle mode.",
+  "pdopn.feedback.cycle_restored": "Normal day/night cycle has been restored.",
+  "pdopn.feedback.switched_day": "Switched to Perpetual Day mode.",
+  "pdopn.feedback.switched_night": "Switched to Perpetual Night mode.",
+
+  "pdopn.title.perpetual_day": "Perpetual Day",
+  "pdopn.subtitle.perpetual_day": "The sun never sets...",
+  "pdopn.title.perpetual_night": "Perpetual Night",
+  "pdopn.subtitle.perpetual_night": "Darkness engulfs the world...",
+
+  "pdopn.temp.display": "Body Temperature: ",
+  "pdopn.temp.maxdays_set": "Max survival days set to:",
+  "pdopn.temp.set": "Body temperature set to:",
+  "pdopn.temp.hud_on": "Temperature HUD enabled.",
+  "pdopn.temp.hud_off": "Temperature HUD disabled.",
+
+  "key.pdopn.toggle_hud": "Toggle Temperature HUD",
+  "category.pdopn": "Perpetual Day or Night",
+
+  "item.pdopn.pure_water_bottle": "§bPure Water Bottle",
+  "item.pdopn.pure_water_bucket": "§bPure Water Bucket",
+
+  "pdopn.thirst.need_purify": "This needs to be purified in a furnace first!",
+  "pdopn.thirst.display": "Hydration: ",
+  "pdopn.thirst.set": "Hydration set to: ",
+  "pdopn.thirst.message_set": "Thirst message [{type}] set to: ",
+
+  "pdopn.thirst.drink.freshwater": "Clear, sweet freshwater. Thirst relieved.",
+  "pdopn.thirst.drink.ocean_bad": "The seawater is salty and harsh. Thirst worsened!",
+  "pdopn.thirst.drink.saltlake_bad": "The salt lake water is bitter. Thirst worsened!",
+  "pdopn.thirst.drink.normal_bad": "This water isn't clean. Your stomach feels bloated...",
+  "pdopn.thirst.drink.unsafe_ok": "You manage a few sips. Thirst slightly relieved."
+}

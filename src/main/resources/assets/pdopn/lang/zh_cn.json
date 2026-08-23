@@ -1,0 +1,39 @@
+{
+  "pdopn.mode.day": "永昼",
+  "pdopn.mode.night": "永夜",
+  "pdopn.mode.normal": "正常",
+
+  "pdopn.feedback.current_mode": "当前模式：",
+  "pdopn.feedback.already_normal": "当前已是正常昼夜循环模式。",
+  "pdopn.feedback.cycle_restored": "正常昼夜循环已恢复。",
+  "pdopn.feedback.switched_day": "已切换为永昼模式。",
+  "pdopn.feedback.switched_night": "已切换为永夜模式。",
+
+  "pdopn.title.perpetual_day": "永昼降临",
+  "pdopn.subtitle.perpetual_day": "太阳永不落下……",
+  "pdopn.title.perpetual_night": "永夜笼罩",
+  "pdopn.subtitle.perpetual_night": "黑暗吞噬了世界……",
+
+  "pdopn.temp.display": "体温：",
+  "pdopn.temp.maxdays_set": "最大生存天数已设为：",
+  "pdopn.temp.set": "体温已设为：",
+  "pdopn.temp.hud_on": "温度 HUD 已开启。",
+  "pdopn.temp.hud_off": "温度 HUD 已关闭。",
+
+  "key.pdopn.toggle_hud": "切换温度 HUD",
+  "category.pdopn": "永昼或永夜",
+
+  "item.pdopn.pure_water_bottle": "§b净水瓶",
+  "item.pdopn.pure_water_bucket": "§b净水桶",
+
+  "pdopn.thirst.need_purify": "需要先放入熔炉烧炼后才能饮用！",
+  "pdopn.thirst.display": "口渴值：",
+  "pdopn.thirst.set": "口渴值已设为：",
+  "pdopn.thirst.message_set": "口渴消息 [{type}] 已设为：",
+
+  "pdopn.thirst.drink.freshwater": "清澈甘甜的淡水，口渴得到缓解。",
+  "pdopn.thirst.drink.ocean_bad": "海水又咸又涩，口渴加剧了！",
+  "pdopn.thirst.drink.saltlake_bad": "咸水湖的水发苦，口渴加剧了！",
+  "pdopn.thirst.drink.normal_bad": "这水不太干净，喝得肚子发胀……",
+  "pdopn.thirst.drink.unsafe_ok": "勉强喝了几口，稍微缓解了一下口渴。"
+}
