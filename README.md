@@ -8,6 +8,8 @@
 
 > 通过指令切换永昼 / 永夜 / 正常循环三种模式，并引入温度、口渴、净水烧炼、实体增强等硬核生存机制的 Minecraft 模组。
 
+Jump to the English introduction: [README_en.md](https://github.com/19136644525lxy/Perpetual-Day-or-Perpetual-Night/blob/main/README_en.md)
+
 ---
 
 ## 平台支持
@@ -244,15 +246,6 @@ Perpetual day or perpetual night/
 - **映射**：Yarn 1.20.1+build.10
 - **构建工具**：Fabric Loom 1.17-SNAPSHOT
 - **Java**：17
-
----
-
-## 设计原则
-
-- **SOLID 原则**：单一职责（每个类只承担一个职责）、开闭原则（通过接口扩展功能）、依赖倒置（指令层依赖 `ModeChangeListener` 接口而非主类）
-- **线程安全**：`ConcurrentHashMap` 存储玩家数据、`CopyOnWriteArrayList` 并发遍历、关键方法 `synchronized` 保证原子性
-- **持久化**：玩家数据按 UUID 独立保存，全局偏移值单独存储，服务器重启不丢失
-- **解耦设计**：温度 / 口渴 / 实体修改 / HUD 渲染各自独立管理器，通过接口通信
 
 ---
 
