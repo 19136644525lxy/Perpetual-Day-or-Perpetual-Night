@@ -96,6 +96,19 @@ Jump to the English introduction: [README_en.md](https://github.com/19136644525l
 | **手持物品** | 岩浆桶 +0.03/tick、冰 -0.005/tick 等（每 20 tick 施加） |
 | **装备隔热** | 皮革套 0.15~0.20，下界合金套 0.13~0.18，降低环境温度影响速率 |
 
+### 降温手段
+
+高温环境下有两条可用的降温途径（此前水体对体温毫无影响，永昼+沙漠无解）：
+
+| 手段 | 效果 |
+|---|---|
+| **泡在水中** | 体温趋向水温。冰洋 -25°C、冻河 -20°C、冷水洋 +2°C、普通河湖 +12°C、暖水洋 +22°C、丛林 +20°C |
+| **饮用净水** | 每瓶 -6°C（净水桶 -20°C），持续 10 秒；直接饮淡水 -3°C，非淡水 -2°C |
+
+> 水温按群系判定；只有水温低于体温时才降温，泡温水不会升温。
+> 装备隔热会同时减缓降温效果（穿厚衣服更难散热）。
+> 体温 ≤ 0°C 时冷饮不再继续降温，避免把自己冻死。
+
 ### 温度效果
 
 | 体温范围 | 效果 |
@@ -190,9 +203,42 @@ Jump to the English introduction: [README_en.md](https://github.com/19136644525l
 
 ---
 
+## 游戏规则
+
+模组注册了一组**每存档生效**的游戏规则，可用原版 `/gamerule` 命令热改（需 OP），
+也会出现在「创建世界 → 游戏规则」界面中。
+
+| 游戏规则 | 默认 | 说明 |
+|---|---|---|
+| `pdopnTemperature` | `true` | 温度系统总开关。关闭后不再有体温变化、效果与致死 |
+| `pdopnThirst` | `true` | 口渴系统总开关。关闭后不再消耗口渴 |
+| `pdopnDrift` | `true` | 偏移累加开关。关闭后**永昼/永夜的时间锁定仍然生效**，只是不再逐日累加偏移 |
+| `pdopnMaxDrift` | `100` | 偏移绝对值上限（°C）。`0` = 不限；默认 ±100 与致死线一致，约第 100 天封顶 |
+| `pdopnBlockTemp` | `true` | 附近危险方块（岩浆 / 火 / 冰等）的温度影响 |
+| `pdopnLethalDamage` | `true` | 温度与脱水致死。关闭后仍会中暑 / 失温 / 脱水，但不会死 |
+| `pdopnMobBoost` | `true` | 敌对生物属性增强 |
+| `pdopnNeutralAggro` | `true` | 中立生物（末影人 / 蜘蛛等）主动追踪玩家 |
+| `pdopnHudDefault` | `true` | 新玩家 HUD 的默认开关（已主动关闭过的玩家不受影响） |
+| `pdopnMaxDaysEnforce` | `false` | 是否把 `maxDays` 从「仅预警」升级为强制：到期自动切回正常循环 |
+
+### 为什么用游戏规则而不是配置文件
+
+`pdopn.json` 位于 `.minecraft/config/`，对同一服务器的**所有存档**生效；
+而模式与偏移是**每存档**的状态，温度是**每玩家**的状态，天然更适合 per-world 控制。
+游戏规则自带 `/gamerule` 命令、OP 权限校验、存档持久化与客户端同步，无需自行实现。
+
+两者分工：**配置文件提供全局默认值，游戏规则提供每存档覆盖**。
+规则一律是「开关 / 上限」语义，具体数值仍由配置承担，避免两套数值来源互相打架。
+
+> 典型用法：`/gamerule pdopnDrift false` —— 只要永昼风景，不要逐日升温的生存压力。
+> 或 `/gamerule pdopnMaxDrift 60` —— 把偏移封顶在 ±60°C，之后维持极端但可生存。
+
+---
+
 ## 配置文件
 
-配置文件位于 `.minecraft/config/pdopn/pdopn.json`，修改后重启生效。
+配置文件位于 `.minecraft/config/pdopn/pdopn.json`，修改后可用 `/pdopn reload` 立即生效，
+也可重启服务器。温度 / 口渴的具体数值均在此处调整。
 
 ### 温度配置
 
@@ -222,6 +268,11 @@ Jump to the English introduction: [README_en.md](https://github.com/19136644525l
 | `unsafeDrinkChance` | `0.75` | 非淡水湖饮水脱水概率 |
 | `drinkCooldownTicks` | `40` | 直接饮水冷却（tick） |
 | `saltLakeChance` | `0.25` | 咸水湖生成概率 |
+| `pureWaterBottleCooling` | `6.0` | 净水瓶降温量（°C） |
+| `pureWaterBucketCooling` | `20.0` | 净水桶降温量（°C） |
+| `freshwaterDrinkCooling` | `3.0` | 直接饮用淡水降温量（°C） |
+| `unsafeDrinkCooling` | `2.0` | 饮用非淡水降温量（°C） |
+| `coolantDurationTicks` | `200` | 降温效果持续时间（tick，200 = 10 秒） |
 
 ### 实体增强配置
 

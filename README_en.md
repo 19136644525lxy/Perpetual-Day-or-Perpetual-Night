@@ -96,6 +96,21 @@ All commands require OP permission (default level 2).
 | **Held Items** | Lava bucket +0.03/tick, Ice -0.005/tick, etc. (applied every 20 ticks) |
 | **Armor Insulation** | Leather set 0.15~0.20, Netherite set 0.13~0.18, reduces environmental temperature effect rate |
 
+### Cooling Options
+
+Hot environments now have two usable cooling paths
+(previously water had **no** effect on body temperature, leaving perpetual-day + desert unsurvivable):
+
+| Method | Effect |
+|---|---|
+| **Standing in water** | Body temperature moves toward the water temperature. Frozen ocean -25°C, frozen river -20°C, cold ocean +2°C, normal river/lake +12°C, warm ocean +22°C, jungle +20°C |
+| **Drinking pure water** | -6°C per bottle (-20°C per bucket) over 10 seconds; direct freshwater drink -3°C, unsafe water -2°C |
+
+> Water temperature is determined by biome; it only cools when colder than your body,
+> so standing in warm water never heats you up.
+> Armor insulation also slows cooling (thick armor traps heat).
+> Below 0°C body temperature, cold drinks stop cooling so you cannot freeze yourself.
+
 ### Temperature Effects
 
 | Body Temp Range | Effect |
@@ -191,9 +206,46 @@ Neutral hostile mobs (Enderman, Spider, Zombie Piglin, etc.) actively track play
 
 ---
 
+## Game Rules
+
+The mod registers a set of **per-world** game rules, changeable at runtime with vanilla
+`/gamerule` (OP required). They also appear in the "Create World → Game Rules" screen.
+
+| Game Rule | Default | Description |
+|---|---|---|
+| `pdopnTemperature` | `true` | Master switch for the temperature system |
+| `pdopnThirst` | `true` | Master switch for the thirst system |
+| `pdopnDrift` | `true` | Drift accumulation. When off, **the day/night time lock still works** — drift simply stops accumulating |
+| `pdopnMaxDrift` | `100` | Absolute drift cap (°C). `0` = unlimited; default ±100 matches the lethal threshold, capping around day 100 |
+| `pdopnBlockTemp` | `true` | Temperature influence of nearby dangerous blocks (lava / fire / ice, etc.) |
+| `pdopnLethalDamage` | `true` | Lethal temperature and dehydration damage. When off you still overheat / freeze / dehydrate, but do not die |
+| `pdopnMobBoost` | `true` | Hostile mob attribute enhancement |
+| `pdopnNeutralAggro` | `true` | Neutral mobs (Enderman / Spider, etc.) actively track players |
+| `pdopnHudDefault` | `true` | Default HUD state for new players (players who turned it off keep their choice) |
+| `pdopnMaxDaysEnforce` | `false` | Upgrade `maxDays` from "warning only" to enforced: auto-revert to Normal cycle on expiry |
+
+### Why game rules instead of config options
+
+`pdopn.json` lives in `.minecraft/config/` and applies to **every world** on the server,
+while mode and drift are **per-world** state and temperature is **per-player** state.
+Game rules come with `/gamerule`, OP permission checks, world-save persistence and
+client sync out of the box — none of which needs reimplementing.
+
+Division of labour: **the config supplies global defaults, game rules supply per-world overrides.**
+Rules are strictly "switch / cap" semantics; concrete numbers stay in the config so the two
+sources never fight each other.
+
+> Typical use: `/gamerule pdopnDrift false` — keep the perpetual-day scenery without the
+> ever-rising temperature pressure.
+> Or `/gamerule pdopnMaxDrift 60` — cap drift at ±60°C so it stays extreme but survivable.
+
+---
+
 ## Configuration
 
-Config file is located at `.minecraft/config/pdopn/pdopn.json`; restart the game after modification.
+Config file is located at `.minecraft/config/pdopn/pdopn.json`;
+apply changes with `/pdopn reload` or by restarting the server.
+All concrete temperature / thirst numbers live here.
 
 ### Temperature Config
 
@@ -223,6 +275,11 @@ Config file is located at `.minecraft/config/pdopn/pdopn.json`; restart the game
 | `unsafeDrinkChance` | `0.75` | Dehydration probability for non-freshwater sources |
 | `drinkCooldownTicks` | `40` | Direct drinking cooldown (ticks) |
 | `saltLakeChance` | `0.25` | Salt lake generation probability |
+| `pureWaterBottleCooling` | `6.0` | Body-temperature cooling per pure water bottle (°C) |
+| `pureWaterBucketCooling` | `20.0` | Body-temperature cooling per pure water bucket (°C) |
+| `freshwaterDrinkCooling` | `3.0` | Cooling from drinking freshwater directly (°C) |
+| `unsafeDrinkCooling` | `2.0` | Cooling from drinking unsafe water (°C) |
+| `coolantDurationTicks` | `200` | Duration of the cooling effect (ticks; 200 = 10s) |
 
 ### Entity Enhancement Options
 

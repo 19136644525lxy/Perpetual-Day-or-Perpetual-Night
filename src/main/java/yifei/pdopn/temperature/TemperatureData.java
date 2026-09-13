@@ -176,6 +176,50 @@ public final class TemperatureData {
         return BLOCK_TEMPS.containsKey(block);
     }
 
+    /* ══════════ 水体温度 ══════════
+     * 作为「体温趋向目标」而非纯环境温度的一部分：
+     * 泡在水里时体温会被拉向水温，因此冷水比热空气更能有效降温。
+     * 此前水体对体温毫无影响（只有口渴系统关心水），
+     * 导致永昼 + 沙漠等高温场景完全没有降温手段。
+     */
+
+    private static final Map<RegistryKey<Biome>, Double> WATER_TEMPS = new HashMap<>();
+
+    /** 默认水温（普通河流 / 湖泊） */
+    public static final double DEFAULT_WATER_TEMP = 12.0;
+
+    static {
+        // 冰水
+        WATER_TEMPS.put(BiomeKeys.FROZEN_OCEAN, -25.0);
+        WATER_TEMPS.put(BiomeKeys.DEEP_FROZEN_OCEAN, -25.0);
+        WATER_TEMPS.put(BiomeKeys.FROZEN_RIVER, -20.0);
+        // 冷水
+        WATER_TEMPS.put(BiomeKeys.COLD_OCEAN, 2.0);
+        WATER_TEMPS.put(BiomeKeys.DEEP_COLD_OCEAN, 0.0);
+        // 常温
+        WATER_TEMPS.put(BiomeKeys.OCEAN, 10.0);
+        WATER_TEMPS.put(BiomeKeys.DEEP_OCEAN, 6.0);
+        WATER_TEMPS.put(BiomeKeys.RIVER, 12.0);
+        WATER_TEMPS.put(BiomeKeys.BEACH, 13.0);
+        WATER_TEMPS.put(BiomeKeys.SNOWY_BEACH, 0.0);
+        WATER_TEMPS.put(BiomeKeys.STONY_SHORE, 13.0);
+        // 温水
+        WATER_TEMPS.put(BiomeKeys.LUKEWARM_OCEAN, 18.0);
+        WATER_TEMPS.put(BiomeKeys.DEEP_LUKEWARM_OCEAN, 17.0);
+        WATER_TEMPS.put(BiomeKeys.WARM_OCEAN, 22.0);
+        WATER_TEMPS.put(BiomeKeys.SWAMP, 16.0);
+        WATER_TEMPS.put(BiomeKeys.MANGROVE_SWAMP, 17.0);
+        WATER_TEMPS.put(BiomeKeys.JUNGLE, 20.0);
+        WATER_TEMPS.put(BiomeKeys.BAMBOO_JUNGLE, 20.0);
+        WATER_TEMPS.put(BiomeKeys.SPARSE_JUNGLE, 19.0);
+    }
+
+    /** 获取群系对应水温；未知群系按「温和水域」处理 */
+    public static double getWaterTemp(RegistryKey<Biome> biomeKey) {
+        if (biomeKey == null) return DEFAULT_WATER_TEMP;
+        return WATER_TEMPS.getOrDefault(biomeKey, DEFAULT_WATER_TEMP);
+    }
+
     /* ══════════ 手持物品温度 ══════════ */
 
     private static final Map<Item, Double> ITEM_TEMPS = new HashMap<>();

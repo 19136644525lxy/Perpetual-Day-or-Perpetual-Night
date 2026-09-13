@@ -35,6 +35,8 @@
   "death.attack.pdopn.heat.player": "%1$s was consumed by extreme heat while fighting %2$s",
   "death.attack.pdopn.cold": "%1$s's body temperature ran away and froze to death",
   "death.attack.pdopn.cold.player": "%1$s froze to death while fighting %2$s",
+  "death.attack.pdopn.dehydration": "%1$s died of severe dehydration",
+  "death.attack.pdopn.dehydration.player": "%1$s died of severe dehydration while fighting %2$s",
   "pdopn.warn.heat": "Body temperature too high!",
   "pdopn.warn.cold": "Body temperature too low!",
   "pdopn.warn.maxdays": "Approaching the maximum survival days",

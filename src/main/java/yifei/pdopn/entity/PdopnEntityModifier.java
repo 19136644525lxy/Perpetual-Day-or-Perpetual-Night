@@ -21,6 +21,7 @@ import org.slf4j.LoggerFactory;
 import yifei.pdopn.config.PdopnConfig;
 import yifei.pdopn.mixin.MobEntityTargetSelectorAccessor;
 import yifei.pdopn.mode.PdopnMode;
+import yifei.pdopn.rules.PdopnSettings;
 
 import java.util.HashMap;
 import java.util.HashSet;
@@ -61,26 +62,55 @@ public final class PdopnEntityModifier {
     /* ══════════ 公开 API ══════════ */
 
     /** 模式切换时调用，对当前所有世界的生物施加或还原修改 */
-    public void onModeChanged(PdopnMode mode, MinecraftServer server) {
-        if (mode == PdopnMode.NORMAL) {
+    public void onModeChanged(PdopnMode mode, MinecraftServer server, PdopnSettings settings) {
+        if (mode == PdopnMode.NORMAL || !settings.enhanceMobs()) {
             removeAllModifications(server);
         } else {
-            // 先清除旧修改，再施加新模式
+            // 先清除旧修改，再施加新模式（避免倍率叠加）
             removeAllModifications(server);
-            applyModifications(mode, server);
+            applyModifications(mode, server, settings);
         }
     }
 
     /** 实体加载（生成/区块加载）时调用，按当前模式施加修改 */
-    public void onEntityLoaded(Entity entity, PdopnMode currentMode) {
-        if (currentMode == PdopnMode.NORMAL || !(entity instanceof LivingEntity)) {
+    public void onEntityLoaded(Entity entity, PdopnMode currentMode, PdopnSettings settings) {
+        if (currentMode == PdopnMode.NORMAL || !settings.enhanceMobs()) {
+            return;
+        }
+        if (!(entity instanceof LivingEntity)) {
             return;
         }
         LivingEntity living = (LivingEntity) entity;
         if (!isEligibleHostile(living)) {
             return;
         }
-        applyToEntity(living, currentMode);
+        applyToEntity(living, currentMode, settings);
+    }
+
+    /**
+     * 周期性与实际在线实体对齐记录表。
+     *
+     * <p>修复的问题：{@code modifiedEntities} 此前只在模式切换时清理。
+     * 生物所在区块卸载后，其实体对象与临时修饰符一同消失，但 UUID 记录会永久残留：
+     * <ul>
+     *   <li>记录表无上限增长；</li>
+     *   <li>该生物重新加载时 {@code applyToEntity} 因「已记录」而直接跳过，
+     *       于是走远再回来会发现怪物变回原版强度。</li>
+     * </ul>
+     * 现在定期剔除已不在任何世界中的记录，使其重新加载时能被正常增强。
+     */
+    public void reconcile(MinecraftServer server) {
+        if (server == null || (modifiedEntities.isEmpty() && aiModifiedEntities.isEmpty())) return;
+
+        Set<UUID> alive = new HashSet<>();
+        for (ServerWorld world : server.getWorlds()) {
+            for (Entity entity : world.iterateEntities()) {
+                alive.add(entity.getUuid());
+            }
+        }
+
+        modifiedEntities.keySet().removeIf(uuid -> !alive.contains(uuid));
+        aiModifiedEntities.removeIf(uuid -> !alive.contains(uuid));
     }
 
     /* ══════════ 实体分类 ══════════ */
@@ -138,18 +168,22 @@ public final class PdopnEntityModifier {
     /* ══════════ 批量操作 ══════════ */
 
     /** 遍历所有世界，对符合条件的实体施加修改 */
-    private void applyModifications(PdopnMode mode, MinecraftServer server) {
+    private void applyModifications(PdopnMode mode, MinecraftServer server, PdopnSettings settings) {
         for (ServerWorld world : server.getWorlds()) {
             for (Entity entity : world.iterateEntities()) {
                 if (!(entity instanceof LivingEntity)) continue;
                 LivingEntity living = (LivingEntity) entity;
                 if (!isEligibleHostile(living) || !shouldBeModified(living, mode)) continue;
-                applyToEntity(living, mode);
+                applyToEntity(living, mode, settings);
             }
         }
     }
 
-    /** 还原所有已修改实体的属性和 AI */
+    /**
+     * 还原所有已修改实体的属性和 AI。
+     * 注意：只遍历已加载实体，处于未加载区块中的实体其临时修饰符本就随对象消失，
+     * 无需还原；其残留记录由 {@link #reconcile} 清理。
+     */
     private void removeAllModifications(MinecraftServer server) {
         if (modifiedEntities.isEmpty()) return;
 
@@ -169,16 +203,16 @@ public final class PdopnEntityModifier {
     /* ══════════ 属性修改 ══════════ */
 
     /** 对单个实体施加模式对应的属性修改和 AI 增强 */
-    private void applyToEntity(LivingEntity entity, PdopnMode mode) {
+    private void applyToEntity(LivingEntity entity, PdopnMode mode, PdopnSettings settings) {
         // 避免重复修改
         if (modifiedEntities.containsKey(entity.getUuid())) return;
 
-        double originalMaxHp = entity.getMaxHealth();
-        double originalCurrentHp = entity.getHealth();
-        double originalBaseHp = entity.getAttributeInstance(EntityAttributes.GENERIC_MAX_HEALTH).getBaseValue();
+        EntityAttributeInstance healthAttr = entity.getAttributeInstance(EntityAttributes.GENERIC_MAX_HEALTH);
+        if (healthAttr == null) return;
 
-        // 保存原始快照
-        OriginalAttributes orig = new OriginalAttributes(originalBaseHp, originalMaxHp, originalCurrentHp);
+        // 注意：必须记录「加入修饰符之前」的 baseValue 作为可还原快照。
+        // 若记录的是已修改值，模式切换反复施加会逐次放大倍率且无法还原。
+        OriginalAttributes orig = new OriginalAttributes(healthAttr.getBaseValue());
 
         if (isBoss(entity)) {
             applyBossAttributes(entity, mode);
@@ -187,7 +221,7 @@ public final class PdopnEntityModifier {
         }
 
         // 仅为中立敌对生物注入玩家追踪 AI（已自带玩家追踪的不重复注入）
-        if (isNeutralHostile(entity)) {
+        if (settings.neutralAggression() && isNeutralHostile(entity)) {
             addPlayerTargetGoal(entity);
             aiModifiedEntities.add(entity.getUuid());
         }
@@ -289,14 +323,14 @@ public final class PdopnEntityModifier {
 
     /** 还原单个实体的属性和 AI */
     private void restoreEntity(LivingEntity entity, OriginalAttributes orig) {
-        // 还原血量基础值
+        // 还原血量基础值，并保持当前血量比例
         EntityAttributeInstance healthAttr = entity.getAttributeInstance(EntityAttributes.GENERIC_MAX_HEALTH);
         if (healthAttr != null) {
+            double modifiedMaxHp = entity.getMaxHealth();
             healthAttr.setBaseValue(orig.originalBaseHp);
-            // 按原始最大 HP 的比例还原当前 HP
-            double newMaxHp = entity.getMaxHealth();
-            if (orig.originalMaxHp > 0) {
-                entity.setHealth((float) (entity.getHealth() / newMaxHp * orig.originalMaxHp));
+            double restoredMaxHp = entity.getMaxHealth();
+            if (modifiedMaxHp > 0) {
+                entity.setHealth((float) (entity.getHealth() / modifiedMaxHp * restoredMaxHp));
             }
         }
 
@@ -392,16 +426,16 @@ public final class PdopnEntityModifier {
         }
     }
 
-    /** 原始属性快照，用于模式恢复时还原 */
+    /**
+     * 原始属性快照，用于模式恢复时还原。
+     * 只记录「加入模组修饰符之前」的最大生命 baseValue —— 这是唯一无法从修饰符
+     * 反推出来的量（模组修饰符都是临时修饰符，可逐一移除）。
+     */
     private static final class OriginalAttributes {
         final double originalBaseHp;
-        final double originalMaxHp;
-        final double originalCurrentHp;
 
-        OriginalAttributes(double baseHp, double maxHp, double currentHp) {
-            this.originalBaseHp = baseHp;
-            this.originalMaxHp = maxHp;
-            this.originalCurrentHp = currentHp;
+        OriginalAttributes(double originalBaseHp) {
+            this.originalBaseHp = originalBaseHp;
         }
     }
 }

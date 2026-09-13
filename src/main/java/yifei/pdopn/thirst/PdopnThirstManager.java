@@ -18,6 +18,8 @@ import net.minecraft.world.biome.Biome;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import yifei.pdopn.config.PdopnConfig;
+import yifei.pdopn.damage.PdopnDamageTypes;
+import yifei.pdopn.rules.PdopnSettings;
 import yifei.pdopn.storage.PlayerDataStore;
 import yifei.pdopn.temperature.PdopnTemperatureManager;
 
@@ -97,6 +99,18 @@ public final class PdopnThirstManager {
         setHydration(playerId, getHydration(playerId) + amount);
     }
 
+    /**
+     * 触发饮水降温（正数 = 降温 °C）。
+     *
+     * <p>此前水体只影响口渴、完全不影响体温，导致永昼 + 沙漠等高温场景
+     * 没有任何可行的降温手段；现在饮水会带来一段持续降温。
+     */
+    public void applyDrinkCooling(UUID playerId, double cooling) {
+        if (temperatureManager == null || cooling <= 0.0) return;
+        int duration = PdopnConfig.getInstance().thirst.coolantDurationTicks;
+        temperatureManager.applyCoolant(playerId, cooling, duration);
+    }
+
     /** 玩家加入时：排队等待数据加载（真正的加载在 tick() 中执行） */
     public void onPlayerJoin(ServerPlayerEntity player) {
         pendingLoads.add(new PendingLoad(player.getUuid(), player));
@@ -168,9 +182,11 @@ public final class PdopnThirstManager {
                 // 25% 概率少量恢复
                 addHydration(id, cfg.normalWaterDrinkRestore * 0.5);
             }
+            applyDrinkCooling(id, cfg.unsafeDrinkCooling);
         } else {
-            // 淡水湖：安全恢复
+            // 淡水湖：安全恢复，且降温效果最好
             addHydration(id, cfg.freshwaterDrinkRestore);
+            applyDrinkCooling(id, cfg.freshwaterDrinkCooling);
         }
 
         // 播放原版喝水音效 + 挥手动画（参照 LegendarySurvivalOverhaul 实现）
@@ -225,7 +241,7 @@ public final class PdopnThirstManager {
     /* ══════════ 每 Tick 更新 ══════════ */
 
     /** 由主类在 END_SERVER_TICK 中调用 */
-    public void tick(MinecraftServer server) {
+    public void tick(MinecraftServer server, PdopnSettings settings) {
         serverRef = server;
         tickCount++;
         PdopnConfig.ThirstConfig cfg = PdopnConfig.getInstance().thirst;
@@ -272,6 +288,11 @@ public final class PdopnThirstManager {
                     current = getHydration(id);
                 }
 
+                // pdopnThirst 关闭时：仅维护趋势与重生兜底，不消耗也不施加效果
+                if (!settings.thirstSystem()) {
+                    continue;
+                }
+
                 // 计算口渴变化
                 double delta = 0.0;
 
@@ -299,9 +320,10 @@ public final class PdopnThirstManager {
                     applyEffects(player, newHydration);
                 }
 
-                // 致死检测
-                if (newHydration <= 0.0) {
-                    player.damage(player.getDamageSources().starve(),
+                // 致死检测：使用模组自定义伤害类型以显示专属死因
+                // pdopnLethalDamage 关闭后仍会脱水但不会死亡
+                if (newHydration <= 0.0 && settings.lethalDamage()) {
+                    player.damage(PdopnDamageTypes.dehydration(player),
                         player.getMaxHealth() * 0.15f);
                 }
             }
@@ -521,7 +543,7 @@ public final class PdopnThirstManager {
             player.addStatusEffect(new StatusEffectInstance(StatusEffects.WEAKNESS, 100, 1, false, false));
             player.addStatusEffect(new StatusEffectInstance(StatusEffects.NAUSEA, 100, 0, false, false));
             if (tickCount % 40 == 0) {
-                player.damage(player.getDamageSources().starve(), 1.0f);
+                player.damage(PdopnDamageTypes.dehydration(player), 1.0f);
             }
         } else {
             // 致死：凋零

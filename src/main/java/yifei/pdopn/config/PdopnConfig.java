@@ -120,6 +120,19 @@ public class PdopnConfig {
         public int drinkCooldownTicks = 40;
         /** 非淡水湖水体饮水口渴概率 (0.0~1.0)：海水/咸水湖/普通水均有此概率脱水 */
         public double unsafeDrinkChance = 0.75;
+
+        /* ── 饮水降温（°C，正数表示降温） ── */
+
+        /** 净水瓶降温量 */
+        public double pureWaterBottleCooling = 6.0;
+        /** 净水桶降温量 */
+        public double pureWaterBucketCooling = 20.0;
+        /** 直接饮用淡水降温量 */
+        public double freshwaterDrinkCooling = 3.0;
+        /** 其他水体（海水 / 咸水湖 / 普通水）降温量：能降温但容易脱水 */
+        public double unsafeDrinkCooling = 2.0;
+        /** 降温效果持续时间（tick），默认 10 秒 */
+        public int coolantDurationTicks = 200;
     }
 
     /* ══════════ 加载 / 保存 ══════════ */

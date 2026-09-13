@@ -35,6 +35,8 @@
   "death.attack.pdopn.heat.player": "%1$s 在与 %2$s 战斗时被高温烧尽",
   "death.attack.pdopn.cold": "%1$s 的体温失控，被严寒冻毙",
   "death.attack.pdopn.cold.player": "%1$s 在与 %2$s 战斗时被严寒冻毙",
+  "death.attack.pdopn.dehydration": "%1$s 严重脱水而亡",
+  "death.attack.pdopn.dehydration.player": "%1$s 在与 %2$s 战斗时严重脱水而亡",
   "pdopn.warn.heat": "体温过高！",
   "pdopn.warn.cold": "体温过低！",
   "pdopn.warn.maxdays": "已接近最大生存天数",

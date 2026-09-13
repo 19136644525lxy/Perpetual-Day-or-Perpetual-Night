@@ -29,6 +29,10 @@ public final class PdopnDamageTypes {
     public static final RegistryKey<DamageType> COLD =
         RegistryKey.of(RegistryKeys.DAMAGE_TYPE, new Identifier(PerpetualDayOrPerpetualNight.MOD_ID, "cold"));
 
+    /** 脱水致死（msgId = pdopn.dehydration → 文本键 death.attack.pdopn.dehydration） */
+    public static final RegistryKey<DamageType> DEHYDRATION =
+        RegistryKey.of(RegistryKeys.DAMAGE_TYPE, new Identifier(PerpetualDayOrPerpetualNight.MOD_ID, "dehydration"));
+
     private PdopnDamageTypes() {}
 
     /** 构造高温致死伤害来源 */
@@ -39,5 +43,10 @@ public final class PdopnDamageTypes {
     /** 构造严寒致死伤害来源 */
     public static DamageSource cold(ServerPlayerEntity player) {
         return player.getDamageSources().create(COLD);
+    }
+
+    /** 构造脱水致死伤害来源 */
+    public static DamageSource dehydration(ServerPlayerEntity player) {
+        return player.getDamageSources().create(DEHYDRATION);
     }
 }

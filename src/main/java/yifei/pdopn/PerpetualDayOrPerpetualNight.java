@@ -33,6 +33,8 @@ import yifei.pdopn.mode.PdopnMode;
 import yifei.pdopn.items.PdopnItems;
 import yifei.pdopn.callback.PdopnPlayerDeathCallback;
 import yifei.pdopn.recipe.PdopnRecipes;
+import yifei.pdopn.rules.PdopnGameRules;
+import yifei.pdopn.rules.PdopnSettings;
 import yifei.pdopn.temperature.PdopnTemperatureManager;
 import yifei.pdopn.thirst.PdopnThirstManager;
 
@@ -81,6 +83,9 @@ public class PerpetualDayOrPerpetualNight implements ModInitializer, PdopnComman
         // 注册净水烧炼配方类型（只接受水瓶，防止贵重药水被误烧）
         PdopnRecipes.register();
 
+        // 注册模组游戏规则（必须在此处触发类加载，静态字段负责实际注册）
+        LOGGER.info("[PDoPN] 已注册 {} 条游戏规则", PdopnGameRules.ruleCount());
+
         // 构造指令处理器：通过构造函数注入依赖（DIP）
         commandHandler = new PdopnCommand(this, temperatureManager, thirstManager);
 
@@ -90,8 +95,9 @@ public class PerpetualDayOrPerpetualNight implements ModInitializer, PdopnComman
         );
 
         // 实体加载时按当前模式施加修改（覆盖新生成和区块加载的生物）
-        ServerEntityEvents.ENTITY_LOAD.register((entity, server) ->
-            entityModifier.onEntityLoaded(entity, currentMode)
+        // 规则每 tick 解析一次即可，实体加载是低频事件，这里即时解析以保持准确
+        ServerEntityEvents.ENTITY_LOAD.register((entity, world) ->
+            entityModifier.onEntityLoaded(entity, currentMode, PdopnSettings.resolve(world.getServer()))
         );
 
         // 每个服务端 tick 结束时锁定时间 + 温度更新
@@ -114,7 +120,8 @@ public class PerpetualDayOrPerpetualNight implements ModInitializer, PdopnComman
 
         // 玩家加入时加载温度 + 口渴数据
         ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
-            temperatureManager.onPlayerJoin(handler.getPlayer());
+            boolean hudDefault = PdopnSettings.resolve(server).hudDefault();
+            temperatureManager.onPlayerJoin(handler.getPlayer(), hudDefault);
             thirstManager.onPlayerJoin(handler.getPlayer());
         });
 
@@ -175,7 +182,9 @@ public class PerpetualDayOrPerpetualNight implements ModInitializer, PdopnComman
         currentMode = newMode;
         temperatureManager.setCurrentMode(newMode);
         if (serverRef != null) {
-            entityModifier.onModeChanged(newMode, serverRef);
+            entityModifier.onModeChanged(newMode, serverRef, PdopnSettings.resolve(serverRef));
+            // 立即持久化，避免崩溃 / 强退导致模式与偏移不一致
+            temperatureManager.saveGlobalData();
         }
     }
 
@@ -192,15 +201,29 @@ public class PerpetualDayOrPerpetualNight implements ModInitializer, PdopnComman
         PdopnMode mode = currentMode;
         hudTickCount++;
 
-        // 首次 tick 时加载全局偏移数据
+        // 首次 tick 时加载全局偏移数据，并恢复存档中记录的模式
         if (!globalDataLoaded) {
-            temperatureManager.loadGlobalData();
+            PdopnMode persisted = temperatureManager.loadGlobalData();
+            if (persisted != PdopnMode.NORMAL) {
+                // 模式必须与偏移一起恢复：否则重启后模式回到 NORMAL，
+                // 而 NORMAL 不应用偏移，玩家会以为永昼/永夜进度丢失。
+                currentMode = persisted;
+                temperatureManager.setCurrentMode(persisted);
+                LOGGER.info("[PDoPN] 已从存档恢复模式：{}", persisted);
+            }
             globalDataLoaded = true;
         }
 
-        // 温度 + 口渴系统更新（每 tick 调用）
-        temperatureManager.tick(server);
-        thirstManager.tick(server);
+        // 解析本 tick 生效的游戏规则（per-world 覆盖），供各系统共享
+        PdopnSettings settings = PdopnSettings.resolve(server);
+
+        // 温度 + 口渴系统更新（每 tick 调用；由 pdopnTemperature / pdopnThirst 规则控制）
+        if (settings.temperatureSystem()) {
+            temperatureManager.tick(server, settings);
+        }
+        if (settings.thirstSystem()) {
+            thirstManager.tick(server, settings);
+        }
 
         // 每 20 tick 合并发送温度+口渴 HUD（共用温度 HUD 开关，避免互相覆盖）
         if (hudTickCount % 20 == 0) {
@@ -211,6 +234,12 @@ public class PerpetualDayOrPerpetualNight implements ModInitializer, PdopnComman
                     }
                 }
             }
+        }
+
+        // 每 6000 tick（约 5 分钟）与在线实体对齐一次实体记录表，
+        // 清理已卸载区块中生物的残留 UUID（否则其重新加载时不会被增强）
+        if (hudTickCount % 6000 == 0) {
+            entityModifier.reconcile(server);
         }
 
         if (!mode.isTimeLocked()) {

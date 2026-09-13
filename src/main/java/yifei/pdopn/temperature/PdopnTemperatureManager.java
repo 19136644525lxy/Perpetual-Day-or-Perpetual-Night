@@ -23,6 +23,7 @@ import org.slf4j.LoggerFactory;
 import yifei.pdopn.config.PdopnConfig;
 import yifei.pdopn.damage.PdopnDamageTypes;
 import yifei.pdopn.mode.PdopnMode;
+import yifei.pdopn.rules.PdopnSettings;
 import yifei.pdopn.storage.PlayerDataStore;
 
 import java.io.*;
@@ -81,8 +82,24 @@ public final class PdopnTemperatureManager {
     /** 已提示过「接近最大生存天数」的玩家 */
     private final Set<UUID> maxDaysWarned = ConcurrentHashMap.newKeySet();
 
+    /**
+     * 临时降温效果（冷饮等）：UUID → 剩余 tick 与每 tick 降温量。
+     * 由口渴系统在喝下净水后触发，使「喝水降温」成为高温下的实际生存手段。
+     */
+    private final Map<UUID, Coolant> coolants = new ConcurrentHashMap<>();
+
+    /** 临时降温效果 */
+    private record Coolant(double amountPerTick, int remainingTicks) {}
+
     /** HUD 显示开关：默认开启 */
     private final Set<UUID> hudEnabled = Collections.synchronizedSet(new HashSet<>());
+
+    /**
+     * 曾显式切换过 HUD 的玩家。
+     * 用于区分「从未设置」与「主动关闭」：前者套用 pdopnHudDefault 规则，
+     * 后者在重新登录后应当保持关闭。
+     */
+    private final Set<UUID> hudTouched = ConcurrentHashMap.newKeySet();
 
     /**
      * 待加载数据的玩家队列。
@@ -150,11 +167,19 @@ public final class PdopnTemperatureManager {
         return lastEnvTemps.getOrDefault(playerId, 0.0);
     }
 
-    /** 玩家加入时：排队等待数据加载（真正的加载在 tick() 中执行） */
-    public void onPlayerJoin(ServerPlayerEntity player) {
+    /**
+     * 玩家加入时：排队等待数据加载（真正的加载在 tick() 中执行）。
+     *
+     * @param hudDefault 新玩家 HUD 的默认开关（由 pdopnHudDefault 规则控制）；
+     *                   已有关闭记录的玩家不受影响
+     */
+    public void onPlayerJoin(ServerPlayerEntity player, boolean hudDefault) {
         UUID id = player.getUuid();
         pendingLoads.add(new PendingLoad(id, player));
-        hudEnabled.add(id); // 默认显示 HUD
+        // 仅当该玩家从未设置过时才套用默认值，避免覆盖其关闭 HUD 的选择
+        if (hudDefault && !hudTouched.contains(id)) {
+            hudEnabled.add(id);
+        }
     }
 
     /** 玩家离开时保存并清理 */
@@ -166,6 +191,7 @@ public final class PdopnTemperatureManager {
         blockTempCache.remove(playerId);
         lastBand.remove(playerId);
         maxDaysWarned.remove(playerId);
+        coolants.remove(playerId);
         // 注意：hudEnabled 故意不清理，否则玩家关闭 HUD 后重新登录会被重置为开启
     }
 
@@ -180,6 +206,7 @@ public final class PdopnTemperatureManager {
 
     /** 切换玩家 HUD 显示状态 */
     public boolean toggleHud(UUID playerId) {
+        hudTouched.add(playerId);
         if (hudEnabled.contains(playerId)) {
             hudEnabled.remove(playerId);
             return false;
@@ -197,7 +224,7 @@ public final class PdopnTemperatureManager {
     /* ══════════ 每 Tick 更新 ══════════ */
 
     /** 由主类在 END_SERVER_TICK 中调用 */
-    public void tick(MinecraftServer server) {
+    public void tick(MinecraftServer server, PdopnSettings settings) {
         serverRef = server;
         tickCount++;
 
@@ -213,14 +240,16 @@ public final class PdopnTemperatureManager {
         }
 
         // ── 偏移累加/衰减逻辑 ──
-        // 永昼/永夜：每天累加 dailyDriftAmount（每 tick 累加一小部分），持续不衰减
+        // 永昼/永夜：每天累加 dailyDriftAmount（每 tick 累加一小部分）
         // 正常模式：偏移按 driftDecayRate 衰减回 0
         PdopnConfig.TemperatureConfig tcfg = PdopnConfig.getInstance().temperature;
-        if (currentMode != PdopnMode.NORMAL) {
+        if (currentMode != PdopnMode.NORMAL && settings.driftAccumulation()) {
             perpetualTicks++;
             // 每 tick 累加 dailyDriftAmount / 24000（= 每天累加 dailyDriftAmount）
             accumulatedDrift += TemperatureBands.driftPerTick(
                 tcfg.dailyDriftAmount, currentMode == PdopnMode.PERPETUAL_DAY);
+            // 应用每存档的偏移上限（默认 ±100°C；0 = 不限）
+            accumulatedDrift = settings.clampDrift(accumulatedDrift);
         } else if (Math.abs(accumulatedDrift) > 0.001) {
             accumulatedDrift = TemperatureBands.decayDrift(accumulatedDrift, tcfg.driftDecayRate);
         }
@@ -240,8 +269,10 @@ public final class PdopnTemperatureManager {
                 }
 
                 // 计算环境温度（含偏移）——带缓存节流，见 envCacheFor
-                double envTemp = envCacheFor(player, currentMode);
-                double blockTemp = blockTempCacheFor(player);
+                double envTemp = envCacheFor(player, currentMode, settings.blockTemperature());
+                double blockTemp = settings.blockTemperature()
+                    ? blockTempCacheFor(player)
+                    : 0.0;
 
                 // 装备隔热系数
                 double insulation = calcInsulation(player);
@@ -249,10 +280,20 @@ public final class PdopnTemperatureManager {
                 // 手持物品温度调节（每 20 tick 施加一次，避免效果过强）
                 double itemEffect = (tickCount % 20 == 0) ? calcHeldItemEffect(player) : 0.0;
 
-                // 体温变化：趋向目标温度（受隔热影响）+ 物品直接调节
+                // 水深浸降温：泡在水里时体温趋向水温（水温低于体温才降温）
+                double waterCooling = calcWaterCooling(player, currentTemp);
+
+                // 冷饮等临时降温效果
+                double coolant = consumeCoolant(id, currentTemp);
+
+                // 体温变化：趋向目标温度（受隔热影响）+ 物品 + 水体 + 冷饮
+                // 注意：隔热对水体/冷饮同样起衰减作用（穿厚衣服更难散热）
                 double envRate = tcfg.baseEnvRate;
                 double rate = envRate * (1.0 - insulation);
-                double delta = (envTemp - currentTemp) * rate + itemEffect;
+                double delta = (envTemp - currentTemp) * rate
+                    + itemEffect
+                    + waterCooling * rate
+                    + coolant;
                 double newTemp = clamp(currentTemp + delta);
 
                 bodyTemps.put(id, newTemp);
@@ -268,12 +309,15 @@ public final class PdopnTemperatureManager {
                 }
 
                 // 致死检测：使用模组自定义伤害类型，以显示专属死因
-                if (newTemp >= TemperatureData.MAX_TEMP) {
-                    player.damage(PdopnDamageTypes.heat(player),
-                        player.getMaxHealth() * 0.25f);
-                } else if (newTemp <= TemperatureData.MIN_TEMP) {
-                    player.damage(PdopnDamageTypes.cold(player),
-                        player.getMaxHealth() * 0.25f);
+                // pdopnLethalDamage 关闭后仍会中暑 / 失温，但不会死亡
+                if (settings.lethalDamage()) {
+                    if (newTemp >= TemperatureData.MAX_TEMP) {
+                        player.damage(PdopnDamageTypes.heat(player),
+                            player.getMaxHealth() * 0.25f);
+                    } else if (newTemp <= TemperatureData.MIN_TEMP) {
+                        player.damage(PdopnDamageTypes.cold(player),
+                            player.getMaxHealth() * 0.25f);
+                    }
                 }
             }
         }
@@ -298,8 +342,10 @@ public final class PdopnTemperatureManager {
     /**
      * 获取（可能来自缓存的）纯环境温度。
      * 无缓存、玩家换了方块、或距上次计算超过 {@link #ENV_RECALC_INTERVAL} tick 时重算。
+     *
+     * @param includeBlocks 是否计入附近方块的温度影响（由 pdopnBlockTemp 规则控制）
      */
-    private double envCacheFor(ServerPlayerEntity player, PdopnMode mode) {
+    private double envCacheFor(ServerPlayerEntity player, PdopnMode mode, boolean includeBlocks) {
         UUID id = player.getUuid();
         ServerWorld world = (ServerWorld) player.getWorld();
         BlockPos pos = player.getBlockPos();
@@ -316,7 +362,7 @@ public final class PdopnTemperatureManager {
             pure = cached.value();
         }
 
-        return combineEnvTemp(pure, blockTempCacheFor(player), mode);
+        return combineEnvTemp(pure, includeBlocks ? blockTempCacheFor(player) : 0.0, mode);
     }
 
     /**
@@ -527,6 +573,64 @@ public final class PdopnTemperatureManager {
         }
     }
 
+    /* ══════════ 降温手段 ══════════ */
+
+    /**
+     * 施加一段临时降温效果（由喝下净水等冷饮触发）。
+     *
+     * @param playerId      玩家
+     * @param totalCooling  整个持续期内累计降温量（°C）；正数表示降温
+     * @param durationTicks 持续 tick 数
+     */
+    public void applyCoolant(UUID playerId, double totalCooling, int durationTicks) {
+        if (totalCooling <= 0.0 || durationTicks <= 0) return;
+        Coolant existing = coolants.get(playerId);
+        // 已有降温效果时叠加，不覆盖（连续喝水应当持续降温）
+        if (existing != null) {
+            totalCooling += existing.amountPerTick() * existing.remainingTicks();
+            durationTicks = Math.max(durationTicks, existing.remainingTicks());
+        }
+        coolants.put(playerId, new Coolant(totalCooling / durationTicks, durationTicks));
+    }
+
+    /** 取出并推进本 tick 的降温量；无效果时返回 0 */
+    private double consumeCoolant(UUID playerId, double currentTemp) {
+        Coolant coolant = coolants.get(playerId);
+        if (coolant == null) return 0.0;
+
+        int remaining = coolant.remainingTicks() - 1;
+        if (remaining <= 0) {
+            coolants.remove(playerId);
+        } else {
+            coolants.put(playerId, new Coolant(coolant.amountPerTick(), remaining));
+        }
+        // 已经是低温时不再继续降温，避免冷饮把自己冻死
+        if (currentTemp <= 0.0) return 0.0;
+        return -coolant.amountPerTick();
+    }
+
+    /**
+     * 计算水深浸降温量：泡在水里时体温趋向水温，水温低于体温才降温。
+     *
+     * <p>返回值语义与「环境温度 - 当前体温」一致，因此调用方复用同一个 rate。
+     * 冰水（-25）在高温下非常有效，温水（+22）在沙漠中依然能救命。
+     */
+    private double calcWaterCooling(ServerPlayerEntity player, double currentTemp) {
+        if (!player.isTouchingWater()) return 0.0;
+
+        ServerWorld world = (ServerWorld) player.getWorld();
+        double waterTemp = 0.0;
+        RegistryKey<Biome> biomeKey = world.getBiome(player.getBlockPos()).getKey().orElse(null);
+        if (biomeKey != null) {
+            waterTemp = TemperatureData.getWaterTemp(biomeKey);
+        } else {
+            waterTemp = TemperatureData.DEFAULT_WATER_TEMP;
+        }
+
+        // 只有水温低于体温才降温（否则视为无影响，避免泡温水反而升温）
+        return Math.min(0.0, waterTemp - currentTemp);
+    }
+
     /* ══════════ 危险预警 ══════════ */
 
     /**
@@ -625,7 +729,7 @@ public final class PdopnTemperatureManager {
     /** 全局偏移数据文件名 */
     private static final String DRIFT_FILE = "drift.properties";
 
-    /** 保存全局偏移数据（accumulatedDrift + perpetualTicks） */
+    /** 保存全局偏移数据（accumulatedDrift + perpetualTicks + 当前模式） */
     public void saveGlobalData() {
         Path path = PlayerDataStore.resolveFile(serverRef, DRIFT_FILE);
         if (path == null) return;
@@ -634,6 +738,9 @@ public final class PdopnTemperatureManager {
             Properties props = new Properties();
             props.setProperty("accumulatedDrift", String.valueOf(accumulatedDrift));
             props.setProperty("perpetualTicks", String.valueOf(perpetualTicks));
+            // 模式必须与偏移一起持久化：只存偏移会导致重启后模式回到 NORMAL，
+            // 而 NORMAL 不应用偏移，玩家会以为自己的永昼进度丢失。
+            props.setProperty("mode", currentMode.name());
             try (OutputStream out = Files.newOutputStream(path)) {
                 props.store(out, "PDoPN Global Drift Data");
             }
@@ -642,17 +749,30 @@ public final class PdopnTemperatureManager {
         }
     }
 
-    /** 加载全局偏移数据（服务器启动时调用） */
-    public void loadGlobalData() {
+    /**
+     * 加载全局偏移数据（服务器启动时调用）。
+     *
+     * @return 存档中记录的模式；无记录时返回 {@link PdopnMode#NORMAL}
+     */
+    public PdopnMode loadGlobalData() {
         Path path = PlayerDataStore.resolveFile(serverRef, DRIFT_FILE);
-        if (path == null || !Files.exists(path)) return;
+        if (path == null || !Files.exists(path)) return PdopnMode.NORMAL;
         try (InputStream in = Files.newInputStream(path)) {
             Properties props = new Properties();
             props.load(in);
             accumulatedDrift = Double.parseDouble(props.getProperty("accumulatedDrift", "0.0"));
             perpetualTicks = Long.parseLong(props.getProperty("perpetualTicks", "0"));
+
+            String rawMode = props.getProperty("mode", PdopnMode.NORMAL.name());
+            try {
+                return PdopnMode.valueOf(rawMode);
+            } catch (IllegalArgumentException e) {
+                LOGGER.warn("Unknown persisted mode '{}', falling back to NORMAL", rawMode);
+                return PdopnMode.NORMAL;
+            }
         } catch (IOException | NumberFormatException e) {
             LOGGER.warn("Failed to load global drift data: {}", e.getMessage());
+            return PdopnMode.NORMAL;
         }
     }
 
