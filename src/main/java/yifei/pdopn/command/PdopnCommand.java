@@ -16,9 +16,10 @@ import net.minecraft.text.Style;
 import net.minecraft.text.Text;
 import net.minecraft.text.TextColor;
 import net.minecraft.world.GameRules;
+import yifei.pdopn.config.PdopnConfig;
+import yifei.pdopn.hud.PdopnHudRenderer;
 import yifei.pdopn.mode.PdopnMode;
 import yifei.pdopn.temperature.PdopnTemperatureManager;
-import yifei.pdopn.temperature.TemperatureData;
 import yifei.pdopn.thirst.PdopnThirstManager;
 
 import java.util.List;
@@ -26,66 +27,68 @@ import java.util.List;
 /**
  * /pdopn 指令的注册与执行。
  * 职责：指令注册、模式切换、标题广播。
+ *
+ * <p>依赖通过构造函数注入（而非静态字段），因此本类可脱离服务器实例化与测试；
+ * 指令执行过程中不再读取任何可变静态状态。
  */
 public final class PdopnCommand {
 
-    /** 模式切换回调，由主类在初始化时注入，避免直接依赖主类 */
-    private static ModeChangeListener modeChangeListener;
+    /** 模式切换回调（由主类注入），避免直接依赖主类实现 */
+    private final ModeChangeListener modeChangeListener;
 
-    /** 温度管理器引用，由主类注入 */
-    private static PdopnTemperatureManager temperatureManager;
+    /** 温度管理器 */
+    private final PdopnTemperatureManager temperatureManager;
 
-    /** 口渴管理器引用，由主类注入 */
-    private static PdopnThirstManager thirstManager;
+    /** 口渴管理器 */
+    private final PdopnThirstManager thirstManager;
 
-    private PdopnCommand() {}
-
-    /** 注册模式切换回调，解耦指令层与模式管理层 */
-    public static void setModeChangeListener(ModeChangeListener listener) {
-        modeChangeListener = listener;
-    }
-
-    /** 注入温度管理器 */
-    public static void setTemperatureManager(PdopnTemperatureManager manager) {
-        temperatureManager = manager;
-    }
-
-    /** 注入口渴管理器 */
-    public static void setThirstManager(PdopnThirstManager manager) {
-        thirstManager = manager;
+    public PdopnCommand(ModeChangeListener modeChangeListener,
+                        PdopnTemperatureManager temperatureManager,
+                        PdopnThirstManager thirstManager) {
+        this.modeChangeListener = modeChangeListener;
+        this.temperatureManager = temperatureManager;
+        this.thirstManager = thirstManager;
     }
 
     /**
      * 将指令注册到 Brigadier 调度器。
      */
-    public static void register(CommandDispatcher<ServerCommandSource> dispatcher) {
+    public void register(CommandDispatcher<ServerCommandSource> dispatcher) {
         dispatcher.register(
             CommandManager.literal("pdopn")
                 .then(CommandManager.literal("day")
-                    .executes(PdopnCommand::switchToDay))
+                    .executes(this::switchToDay))
                 .then(CommandManager.literal("night")
-                    .executes(PdopnCommand::switchToNight))
+                    .executes(this::switchToNight))
                 .then(CommandManager.literal("cycle")
-                    .executes(PdopnCommand::restoreCycle))
+                    .executes(this::restoreCycle))
                 .then(CommandManager.literal("status")
-                    .executes(PdopnCommand::showStatus))
+                    .executes(this::showStatus))
                 // 温度系统子命令
                 .then(CommandManager.literal("temp")
-                    .executes(PdopnCommand::showTemp)
+                    .executes(this::showTemp)
                     .then(CommandManager.literal("maxdays")
                         .then(CommandManager.argument("days", IntegerArgumentType.integer(1))
-                            .executes(PdopnCommand::setMaxDays)))
+                            .executes(this::setMaxDays)))
                     .then(CommandManager.literal("set")
                         .then(CommandManager.argument("value", FloatArgumentType.floatArg(-100.0f, 100.0f))
-                            .executes(PdopnCommand::setTemp)))
+                            .executes(this::setTemp)))
                     .then(CommandManager.literal("hud")
-                        .executes(PdopnCommand::toggleHud)))
+                        .executes(this::toggleHud)))
                 // 口渴系统子命令
                 .then(CommandManager.literal("thirst")
-                    .executes(PdopnCommand::showThirst)
+                    .executes(this::showThirst)
                     .then(CommandManager.literal("set")
                         .then(CommandManager.argument("value", FloatArgumentType.floatArg(0.0f, 100.0f))
-                            .executes(PdopnCommand::setThirst))))
+                            .executes(this::setThirst))))
+                // 全局偏移子命令（可在控制台执行）
+                .then(CommandManager.literal("drift")
+                    .executes(this::showDrift)
+                    .then(CommandManager.literal("reset")
+                        .executes(this::resetDrift)))
+                // 重新加载配置文件（可在控制台执行）
+                .then(CommandManager.literal("reload")
+                    .executes(this::reloadConfig))
         );
     }
 
@@ -98,7 +101,7 @@ public final class PdopnCommand {
      *
      * @return 执行者玩家；非玩家执行者返回 null（并已反馈错误）
      */
-    private static ServerPlayerEntity requirePlayer(ServerCommandSource source) {
+    private ServerPlayerEntity requirePlayer(ServerCommandSource source) {
         ServerPlayerEntity player = source.getPlayer();
         if (player == null) {
             source.sendError(Text.translatable("pdopn.error.player_only"));
@@ -106,21 +109,21 @@ public final class PdopnCommand {
         return player;
     }
 
-    private static int switchToDay(CommandContext<ServerCommandSource> context) {
+    private int switchToDay(CommandContext<ServerCommandSource> context) {
         ServerPlayerEntity player = requirePlayer(context.getSource());
         if (player == null) return 0;
         executeSwitch(player, PdopnMode.PERPETUAL_DAY);
         return 1;
     }
 
-    private static int switchToNight(CommandContext<ServerCommandSource> context) {
+    private int switchToNight(CommandContext<ServerCommandSource> context) {
         ServerPlayerEntity player = requirePlayer(context.getSource());
         if (player == null) return 0;
         executeSwitch(player, PdopnMode.PERPETUAL_NIGHT);
         return 1;
     }
 
-    private static int restoreCycle(CommandContext<ServerCommandSource> context) {
+    private int restoreCycle(CommandContext<ServerCommandSource> context) {
         ServerCommandSource source = context.getSource();
         PdopnMode current = getCurrentMode();
 
@@ -134,9 +137,9 @@ public final class PdopnCommand {
         return 1;
     }
 
-    private static int showStatus(CommandContext<ServerCommandSource> context) {
+    private int showStatus(CommandContext<ServerCommandSource> context) {
         ServerCommandSource source = context.getSource();
-        PdopnMode mode = modeChangeListener != null ? modeChangeListener.getCurrentMode() : PdopnMode.NORMAL;
+        PdopnMode mode = getCurrentMode();
 
         String modeKey;
         int color;
@@ -156,7 +159,7 @@ public final class PdopnCommand {
 
     /* ────────── 温度系统子命令 ────────── */
 
-    private static int showTemp(CommandContext<ServerCommandSource> context) {
+    private int showTemp(CommandContext<ServerCommandSource> context) {
         ServerCommandSource source = context.getSource();
         ServerPlayerEntity player = requirePlayer(source);
 
@@ -166,7 +169,8 @@ public final class PdopnCommand {
         String sign = bodyTemp >= 0 ? "+" : "";
         String tempStr = String.format("%.1f", bodyTemp);
 
-        int color = getTempDisplayColor(bodyTemp);
+        // 颜色梯度统一取自 PdopnHudRenderer，避免指令显示与 HUD 出现两套数值
+        int color = PdopnHudRenderer.getTempColor(bodyTemp);
         source.sendFeedback(
             () -> Text.translatable("pdopn.temp.display")
                 .append(Text.literal(sign + tempStr + "°C")
@@ -176,7 +180,7 @@ public final class PdopnCommand {
         return 1;
     }
 
-    private static int setMaxDays(CommandContext<ServerCommandSource> context) {
+    private int setMaxDays(CommandContext<ServerCommandSource> context) {
         int days = IntegerArgumentType.getInteger(context, "days");
         if (temperatureManager != null) {
             temperatureManager.setMaxDays(days);
@@ -188,7 +192,7 @@ public final class PdopnCommand {
         return 1;
     }
 
-    private static int setTemp(CommandContext<ServerCommandSource> context) {
+    private int setTemp(CommandContext<ServerCommandSource> context) {
         float value = FloatArgumentType.getFloat(context, "value");
         ServerPlayerEntity player = requirePlayer(context.getSource());
         if (player == null) return 0;
@@ -206,7 +210,7 @@ public final class PdopnCommand {
         return 1;
     }
 
-    private static int toggleHud(CommandContext<ServerCommandSource> context) {
+    private int toggleHud(CommandContext<ServerCommandSource> context) {
         ServerPlayerEntity player = requirePlayer(context.getSource());
         if (player == null || temperatureManager == null) return 0;
 
@@ -219,19 +223,9 @@ public final class PdopnCommand {
         return 1;
     }
 
-    /** 根据体温返回显示颜色 */
-    private static int getTempDisplayColor(double temp) {
-        double abs = Math.abs(temp);
-        if (abs <= 10.0) return 0xFFFFFF;
-        if (abs <= 25.0) return temp > 0 ? 0xFFD475 : 0x88CCFF;
-        if (abs <= 45.0) return temp > 0 ? 0xFFAA00 : 0x5555FF;
-        if (abs <= 70.0) return temp > 0 ? 0xFF6600 : 0x2222CC;
-        return temp > 0 ? 0xFF0000 : 0x9900FF;
-    }
-
     /* ────────── 口渴系统子命令 ────────── */
 
-    private static int showThirst(CommandContext<ServerCommandSource> context) {
+    private int showThirst(CommandContext<ServerCommandSource> context) {
         ServerCommandSource source = context.getSource();
         ServerPlayerEntity player = requirePlayer(source);
 
@@ -240,7 +234,7 @@ public final class PdopnCommand {
         double hydration = thirstManager.getHydration(player.getUuid());
         String valueStr = String.format("%.1f", hydration);
 
-        int color = getHydrationColor(hydration);
+        int color = PdopnHudRenderer.getHydrationColor(hydration);
         source.sendFeedback(
             () -> Text.translatable("pdopn.thirst.display")
                 .append(Text.literal(valueStr)
@@ -250,7 +244,7 @@ public final class PdopnCommand {
         return 1;
     }
 
-    private static int setThirst(CommandContext<ServerCommandSource> context) {
+    private int setThirst(CommandContext<ServerCommandSource> context) {
         float value = FloatArgumentType.getFloat(context, "value");
         ServerPlayerEntity player = requirePlayer(context.getSource());
         if (player == null) return 0;
@@ -267,20 +261,59 @@ public final class PdopnCommand {
         return 1;
     }
 
-    private static int getHydrationColor(double hydration) {
-        // 读取配置阈值，避免与 PdopnHudRenderer 出现两套硬编码数值
-        var cfg = yifei.pdopn.config.PdopnConfig.getInstance().thirst;
-        if (hydration >= cfg.comfortZoneLow) return 0x55FFFF;
-        if (hydration >= cfg.lightThirstLow) return 0xFFAA00;
-        if (hydration >= cfg.mediumDehydrationLow) return 0xFF6600;
-        if (hydration >= cfg.heavyDehydrationLow) return 0xFF3300;
-        return 0xFF0000;
+    /* ────────── 全局偏移子命令 ────────── */
+
+    /** 查看当前累计偏移（控制台也可执行） */
+    private int showDrift(CommandContext<ServerCommandSource> context) {
+        if (temperatureManager == null) return 0;
+
+        double drift = temperatureManager.getAccumulatedDrift();
+        String sign = drift >= 0 ? "+" : "";
+        context.getSource().sendFeedback(
+            () -> Text.translatable("pdopn.drift.display")
+                .append(Text.literal(sign + String.format("%.1f", drift) + "°C")
+                    .setStyle(Style.EMPTY.withColor(TextColor.fromRgb(0xFFD475)).withBold(true))),
+            false
+        );
+        return 1;
+    }
+
+    /**
+     * 清空累计偏移，无需重启服务器。
+     * 此前玩家一旦让偏移滚到致死温度就无解，只能改配置并重启。
+     */
+    private int resetDrift(CommandContext<ServerCommandSource> context) {
+        if (temperatureManager == null) return 0;
+
+        double before = temperatureManager.getAccumulatedDrift();
+        temperatureManager.resetAccumulatedDrift();
+        temperatureManager.saveGlobalData();
+
+        String sign = before >= 0 ? "+" : "";
+        context.getSource().sendFeedback(
+            () -> Text.translatable("pdopn.drift.reset")
+                .append(Text.literal(" (" + sign + String.format("%.1f", before) + "°C → 0.0°C)")),
+            true
+        );
+        return 1;
+    }
+
+    /* ────────── 配置重载 ────────── */
+
+    /** 重新加载 pdopn.json（控制台也可执行） */
+    private int reloadConfig(CommandContext<ServerCommandSource> context) {
+        PdopnConfig.reload();
+        context.getSource().sendFeedback(
+            () -> Text.translatable("pdopn.config.reloaded"),
+            true
+        );
+        return 1;
     }
 
     /* ────────── 核心切换逻辑 ────────── */
 
     /** 执行模式切换 */
-    public static void executeSwitch(ServerPlayerEntity player, PdopnMode targetMode) {
+    public void executeSwitch(ServerPlayerEntity player, PdopnMode targetMode) {
         ServerCommandSource source = player.getCommandSource();
         ServerWorld world = source.getWorld();
 
@@ -318,17 +351,17 @@ public final class PdopnCommand {
     /* ────────── 工具方法 ────────── */
 
     /** 关闭指定世界的昼夜循环规则 */
-    private static void disableDaylightCycle(ServerWorld world, ServerCommandSource source) {
+    private void disableDaylightCycle(ServerWorld world, ServerCommandSource source) {
         world.getGameRules().get(GameRules.DO_DAYLIGHT_CYCLE).set(false, source.getServer());
     }
 
     /** 获取当前模式 */
-    private static PdopnMode getCurrentMode() {
+    private PdopnMode getCurrentMode() {
         return modeChangeListener != null ? modeChangeListener.getCurrentMode() : PdopnMode.NORMAL;
     }
 
     /** 通知模式管理层切换模式 */
-    private static void notifyModeChange(PdopnMode newMode) {
+    private void notifyModeChange(PdopnMode newMode) {
         if (modeChangeListener != null) {
             modeChangeListener.onModeChange(newMode);
         }
@@ -338,7 +371,7 @@ public final class PdopnCommand {
      * 向服务器所有玩家广播主标题 + 副标题。
      * 淡入 10 ticks (0.5s), 停留 60 ticks (3s), 淡出 10 ticks (0.5s)
      */
-    private static void broadcastTitle(ServerCommandSource source, Text title, Text subtitle) {
+    private void broadcastTitle(ServerCommandSource source, Text title, Text subtitle) {
         List<ServerPlayerEntity> players = source.getServer().getPlayerManager().getPlayerList();
         TitleFadeS2CPacket fadePacket = new TitleFadeS2CPacket(10, 60, 10);
         SubtitleS2CPacket subtitlePacket = new SubtitleS2CPacket(subtitle);
@@ -352,7 +385,7 @@ public final class PdopnCommand {
     }
 
     /** 清除所有玩家的标题显示 */
-    private static void clearAllTitles(ServerCommandSource source) {
+    private void clearAllTitles(ServerCommandSource source) {
         ClearTitleS2CPacket packet = new ClearTitleS2CPacket(false);
         for (ServerPlayerEntity player : source.getServer().getPlayerManager().getPlayerList()) {
             player.networkHandler.sendPacket(packet);

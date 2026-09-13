@@ -28,6 +28,20 @@
   "pdopn.hud.perpetual_night": "Perpetual Night",
   "pdopn.hud.normal": "Normal",
 
+  "pdopn.drift.display": "Current accumulated drift: ",
+  "pdopn.drift.reset": "Accumulated drift cleared.",
+  "pdopn.config.reloaded": "Configuration reloaded.",
+  "pdopn.death.heat": "%1$s was consumed by extreme heat",
+  "pdopn.death.cold": "%1$s froze to death",
+  "pdopn.warn.heat": "Body temperature too high!",
+  "pdopn.warn.cold": "Body temperature too low!",
+  "pdopn.warn.maxdays": "Approaching the maximum survival days",
+
+  "advancements.pdopn.pure_water.title": "First Clean Drink",
+  "advancements.pdopn.pure_water.description": "Smelt a Pure Water Bottle so you never have to drink dirty water again",
+  "advancements.pdopn.pure_water_bucket.title": "Clean Water Reserve",
+  "advancements.pdopn.pure_water_bucket.description": "Smelt a Pure Water Bucket",
+
   "key.pdopn.toggle_hud": "Toggle Temperature HUD",
   "category.pdopn": "Perpetual Day or Night",
 

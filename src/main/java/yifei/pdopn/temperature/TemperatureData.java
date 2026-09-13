@@ -21,9 +21,14 @@ public final class TemperatureData {
 
     /* ══════════ 体温常量 ══════════ */
 
-    public static final double MIN_TEMP = -100.0;
-    public static final double MAX_TEMP = 100.0;
-    public static final double DEFAULT_BODY_TEMP = 0.0;
+    /* ══════════ 体温常量 ══════════
+     * 纯数值逻辑（档位 / 偏移 / 时间 / 海拔）见 {@link TemperatureBands}，
+     * 那里不依赖 Minecraft 注册表，可直接单元测试。
+     */
+
+    public static final double MIN_TEMP = TemperatureBands.MIN_TEMP;
+    public static final double MAX_TEMP = TemperatureBands.MAX_TEMP;
+    public static final double DEFAULT_BODY_TEMP = TemperatureBands.DEFAULT_BODY_TEMP;
 
     /* ══════════ 维度基础温度 ══════════ */
 
@@ -268,25 +273,23 @@ public final class TemperatureData {
 
     /* ══════════ 时间修正 ══════════ */
 
-    /** 根据世界时间 (0-24000) 返回时间温度修正 */
+    /* ══════════ 时间修正 / 偏移 / 海拔 ══════════
+     * 已迁移至 {@link TemperatureBands}（纯函数、可单元测试）。
+     * 仅保留以下转发方法，兼容既有调用点。
+     */
+
+    /** @see TemperatureBands#getTimeModifier(long) */
     public static double getTimeModifier(long worldTime) {
-        long t = worldTime % 24000;
-        if (t >= 6000 && t < 16000) return 5.0;      // 白天
-        if (t >= 16000 && t < 18000) return 2.0;     // 黄昏
-        if (t >= 4000 && t < 6000) return -2.0;      // 黎明
-        return -5.0;                                   // 夜晚
+        return TemperatureBands.getTimeModifier(worldTime);
+    }
+
+    /** @see TemperatureBands#getAltitudeModifier(int) */
+    public static double getAltitudeModifier(int y) {
+        return TemperatureBands.getAltitudeModifier(y);
     }
 
     /* ══════════ 天气修正 ══════════
      * 实际数值来自 PdopnConfig.temperature 的 rainModifier / thunderModifier，
      * 此处不再重复定义常量（旧常量无人引用且会与配置产生两套数值）。
      */
-
-    /* ══════════ 海拔修正 ══════════ */
-
-    public static double getAltitudeModifier(int y) {
-        if (y > 120) return -(y - 120) * 0.05;
-        if (y < 0) return -y * 0.03;
-        return 0.0;
-    }
 }

@@ -13,10 +13,12 @@ import net.minecraft.entity.mob.Angerable;
 import net.minecraft.entity.mob.MobEntity;
 import net.minecraft.entity.mob.Monster;
 import net.minecraft.entity.player.PlayerEntity;
+import net.minecraft.registry.Registries;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.world.ServerWorld;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import yifei.pdopn.config.PdopnConfig;
 import yifei.pdopn.mixin.MobEntityTargetSelectorAccessor;
 import yifei.pdopn.mode.PdopnMode;
 
@@ -83,9 +85,24 @@ public final class PdopnEntityModifier {
 
     /* ══════════ 实体分类 ══════════ */
 
+    /**
+     * 实体是否被配置允许增强。
+     *
+     * <p>用途：避免与「精英怪物」「史诗战斗」等同样改写生物属性的模组互相打架。
+     * 黑名单优先级最高；白名单为空表示「除黑名单外全部允许」，保持默认行为不变。
+     */
+    private boolean isAllowedByConfig(LivingEntity entity) {
+        PdopnConfig.EntityConfig cfg = PdopnConfig.getInstance().entity;
+        String id = Registries.ENTITY_TYPE.getId(entity.getType()).toString();
+
+        if (cfg.blacklist != null && cfg.blacklist.contains(id)) return false;
+        if (cfg.whitelist == null || cfg.whitelist.isEmpty()) return true;
+        return cfg.whitelist.contains(id);
+    }
+
     /** 是否为敌对生物（实现 Monster 接口） */
     private boolean isEligibleHostile(LivingEntity entity) {
-        return entity instanceof Monster;
+        return entity instanceof Monster && isAllowedByConfig(entity);
     }
 
     /** 是否为 Boss 生物（末影龙、凋灵） — Boss 优先级高于亡灵排除 */

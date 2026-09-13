@@ -1,0 +1,38 @@
+{
+  "display": {
+    "icon": {
+      "item": "pdopn:pure_water_bottle"
+    },
+    "title": {
+      "translate": "advancements.pdopn.pure_water.title"
+    },
+    "description": {
+      "translate": "advancements.pdopn.pure_water.description"
+    },
+    "frame": "task",
+    "show_toast": true,
+    "announce_to_chat": true,
+    "hidden": false
+  },
+  "criteria": {
+    "has_pure_water_bottle": {
+      "trigger": "minecraft:inventory_changed",
+      "conditions": {
+        "items": [
+          {
+            "items": [
+              "pdopn:pure_water_bottle"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "rewards": {
+    "recipes": [
+      "pdopn:pure_water_bottle_from_potion",
+      "pdopn:pure_water_bottle_from_potion_blasting",
+      "pdopn:pure_water_bottle_from_potion_smoking"
+    ]
+  }
+}

@@ -18,6 +18,7 @@ import net.minecraft.world.biome.Biome;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import yifei.pdopn.config.PdopnConfig;
+import yifei.pdopn.storage.PlayerDataStore;
 import yifei.pdopn.temperature.PdopnTemperatureManager;
 
 import java.io.*;
@@ -192,20 +193,7 @@ public final class PdopnThirstManager {
         if (biomeKey == null) return WorldWaterType.NORMAL_WATER;
 
         String biomeId = biomeKey.getValue().toString();
-        // 海洋类：优先判定（含 frozen_ocean）
-        if (biomeId.contains("ocean")) {
-            return WorldWaterType.OCEAN;
-        }
-        // 咸水湖
-        if (SaltLakeDetector.isSaltLake(pos, biomeKey)) {
-            return WorldWaterType.SALT_LAKE;
-        }
-        // 淡水湖（候选群系且非咸水湖）
-        if (SaltLakeDetector.isFreshwaterLake(pos, biomeKey)) {
-            return WorldWaterType.FRESHWATER_LAKE;
-        }
-        // 普通水（其他群系的水体）
-        return WorldWaterType.NORMAL_WATER;
+        return SaltLakeDetector.classify(biomeId, SaltLakeDetector.isSaltLake(pos, biomeKey));
     }
 
     /** 不安全水体的脱水量 */
@@ -548,57 +536,26 @@ public final class PdopnThirstManager {
 
     /* ══════════ 持久化 ══════════ */
 
-    private Path getDataDir() {
-        if (serverRef == null) return null;
-        return serverRef.getSavePath(net.minecraft.util.WorldSavePath.ROOT).resolve("pdopn");
-    }
+    /** 口渴数据文件名 */
+    private static final String THIRST_FILE = "thirst.properties";
 
     private void loadPlayerData(UUID playerId) {
-        Path dir = getDataDir();
-        if (dir == null) {
-            hydrationMap.put(playerId, PdopnConfig.getInstance().thirst.initialValue);
-            return;
-        }
-        File file = dir.resolve("thirst.properties").toFile();
-        if (!file.exists()) {
-            hydrationMap.put(playerId, PdopnConfig.getInstance().thirst.initialValue);
-            return;
-        }
-        try (InputStream in = new FileInputStream(file)) {
-            Properties props = new Properties();
-            props.load(in);
-            String val = props.getProperty(playerId.toString());
-            double hydration = val != null ? Double.parseDouble(val) : PdopnConfig.getInstance().thirst.initialValue;
-            hydrationMap.put(playerId, Math.max(0.0, Math.min(PdopnConfig.getInstance().thirst.maxValue, hydration)));
-        } catch (IOException | NumberFormatException e) {
-            LOGGER.warn("Failed to load thirst for {}: {}", playerId, e.getMessage());
-            hydrationMap.put(playerId, PdopnConfig.getInstance().thirst.initialValue);
-        }
+        PdopnConfig.ThirstConfig cfg = PdopnConfig.getInstance().thirst;
+        double value = PlayerDataStore.loadDouble(
+            PlayerDataStore.resolveFile(serverRef, THIRST_FILE),
+            playerId,
+            cfg.initialValue,
+            v -> Math.max(0.0, Math.min(cfg.maxValue, v))
+        );
+        hydrationMap.put(playerId, value);
     }
 
     private void savePlayerData(UUID playerId) {
-        Path dir = getDataDir();
-        if (dir == null) return;
-        try {
-            dir.toFile().mkdirs();
-            File file = dir.resolve("thirst.properties").toFile();
-
-            Properties props = new Properties();
-            if (file.exists()) {
-                try (InputStream in = new FileInputStream(file)) {
-                    props.load(in);
-                }
-            }
-
-            props.setProperty(playerId.toString(),
-                String.valueOf(hydrationMap.getOrDefault(playerId, 0.0)));
-
-            try (OutputStream out = new FileOutputStream(file)) {
-                props.store(out, "PDoPN Thirst Data");
-            }
-        } catch (IOException e) {
-            LOGGER.warn("Failed to save thirst for {}: {}", playerId, e.getMessage());
-        }
+        PlayerDataStore.saveDouble(
+            PlayerDataStore.resolveFile(serverRef, THIRST_FILE),
+            playerId,
+            hydrationMap.getOrDefault(playerId, PdopnConfig.getInstance().thirst.initialValue)
+        );
     }
 
     public void saveAllPlayerData() {

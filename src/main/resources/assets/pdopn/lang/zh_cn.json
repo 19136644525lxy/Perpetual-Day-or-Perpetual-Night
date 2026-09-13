@@ -28,6 +28,20 @@
   "pdopn.hud.perpetual_night": "永夜",
   "pdopn.hud.normal": "正常",
 
+  "pdopn.drift.display": "当前累计偏移：",
+  "pdopn.drift.reset": "累计偏移已清零。",
+  "pdopn.config.reloaded": "配置已重新加载。",
+  "pdopn.death.heat": "%1$s 被高温烧尽",
+  "pdopn.death.cold": "%1$s 被严寒冻毙",
+  "pdopn.warn.heat": "体温过高！",
+  "pdopn.warn.cold": "体温过低！",
+  "pdopn.warn.maxdays": "已接近最大生存天数",
+
+  "advancements.pdopn.pure_water.title": "第一口净水",
+  "advancements.pdopn.pure_water.description": "烧炼获得一瓶净水瓶，从此不必再喝脏水",
+  "advancements.pdopn.pure_water_bucket.title": "净水储备",
+  "advancements.pdopn.pure_water_bucket.description": "烧炼获得一桶净水桶",
+
   "key.pdopn.toggle_hud": "切换温度 HUD",
   "category.pdopn": "永昼或永夜",
 

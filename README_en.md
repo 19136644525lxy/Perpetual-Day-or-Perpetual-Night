@@ -72,6 +72,12 @@ All commands require OP permission (default level 2).
 | `/pdopn temp hud` | Toggle temperature HUD display |
 | `/pdopn thirst` | Show your hydration level |
 | `/pdopn thirst set <value>` | Set your hydration level (0 to 100) |
+| `/pdopn drift` | Show the current accumulated temperature drift (works from console) |
+| `/pdopn drift reset` | Clear accumulated drift and day counter without restarting the server (works from console) |
+| `/pdopn reload` | Reload `pdopn.json` (works from console) |
+
+> `temp maxdays` currently only acts as the threshold for a one-time warning (HUD / ActionBar)
+> when that many perpetual days have elapsed. It does not end the game or alter temperature math.
 
 ---
 
@@ -202,6 +208,26 @@ Config file is located at `.minecraft/config/pdopn/pdopn.json`; restart the game
 | `unsafeDrinkChance` | `0.75` | Dehydration probability for non-freshwater sources |
 | `drinkCooldownTicks` | `40` | Direct drinking cooldown (ticks) |
 | `saltLakeChance` | `0.25` | Salt lake generation probability |
+
+### Entity Enhancement Options
+
+| Option | Default | Description |
+|---|---|---|
+| `entity.whitelist` | `[]` (empty) | Entity IDs allowed to be enhanced. Empty means "everything except the blacklist" |
+| `entity.blacklist` | `[]` (empty) | Entity IDs never enhanced; takes priority over the whitelist |
+
+> Purpose: avoid conflicts with mods that also rewrite mob attributes (elite mobs, epic fight, etc.).
+> For example `"blacklist": ["modid:elite_zombie"]`, or
+> `"whitelist": ["minecraft:zombie", "minecraft:skeleton"]`.
+
+### Config Version
+
+| Option | Default | Description |
+|---|---|---|
+| `configVersion` | `2` | Config schema version, used for automatic migration |
+
+> Use `/pdopn reload` to apply config changes without restarting the server.
+> If `configVersion` in the file is older than the current one, the mod fills in new fields and writes the file back.
 
 ---
 

@@ -13,5 +13,13 @@ public enum WorldWaterType {
     /** 咸水湖：异变水体，饮水易脱水 */
     SALT_LAKE,
     /** 普通水：池塘/自流水等非候选群系水体 */
-    NORMAL_WATER
+    NORMAL_WATER;
+
+    /**
+     * 是否为不安全水源（直接饮用存在脱水风险）。
+     * 仅淡水湖是安全水源。
+     */
+    public boolean isUnsafe() {
+        return this != FRESHWATER_LAKE;
+    }
 }

@@ -72,6 +72,12 @@ Jump to the English introduction: [README_en.md](https://github.com/19136644525l
 | `/pdopn temp hud` | 切换温度 HUD 显示 |
 | `/pdopn thirst` | 查看自身体口渴值 |
 | `/pdopn thirst set <value>` | 设置自身体口渴值（0 ~ 100） |
+| `/pdopn drift` | 查看当前累计温度偏移（控制台可用） |
+| `/pdopn drift reset` | 清空累计偏移与持续天数计数，无需重启服务器（控制台可用） |
+| `/pdopn reload` | 重新加载 `pdopn.json` 配置（控制台可用） |
+
+> `temp maxdays` 目前仅作为「达到该天数时提示一次」的预警阈值（HUD 与 ActionBar），
+> 不会强制结束游戏或改变温度计算。
 
 ---
 
@@ -202,6 +208,26 @@ Jump to the English introduction: [README_en.md](https://github.com/19136644525l
 | `drinkCooldownTicks` | `40` | 直接饮水冷却（tick） |
 | `saltLakeChance` | `0.25` | 咸水湖生成概率 |
 
+### 实体增强配置
+
+| 配置项 | 默认值 | 说明 |
+|---|---|---|
+| `entity.whitelist` | `[]`（空） | 允许增强的实体 ID。为空表示「除黑名单外全部允许」 |
+| `entity.blacklist` | `[]`（空） | 禁止增强的实体 ID，优先级高于白名单 |
+
+> 用途：避让同样改写生物属性的模组（精英怪物 / 史诗战斗等）。
+> 例如 `"blacklist": ["modid:elite_zombie"]`，或
+> `"whitelist": ["minecraft:zombie", "minecraft:skeleton"]`。
+
+### 配置版本
+
+| 配置项 | 默认值 | 说明 |
+|---|---|---|
+| `configVersion` | `2` | 配置文件结构版本，用于旧配置自动迁移 |
+
+> 修改配置后可用 `/pdopn reload` 立即生效，无需重启服务器。
+> 若文件中出现 `configVersion` 小于当前版本，模组会自动补齐新增字段并回写文件。
+
 ---
 
 ## 安装方法
@@ -231,11 +257,14 @@ Perpetual day or perpetual night/
 │   ├── items/                              # 净水瓶 / 净水桶
 │   ├── mixin/                              # Mixin 注入
 │   ├── mode/                               # 模式枚举
-│   ├── temperature/                        # 温度系统
+│   ├── recipe/                             # 净水自定义配方类型
+│   ├── storage/                            # 玩家数据持久化
+│   ├── temperature/                        # 温度系统（含 TemperatureBands 纯数值逻辑）
 │   └── thirst/                             # 口渴系统
+├── src/test/java/yifei/pdopn/              # 单元测试（纯数值逻辑，无需启动游戏）
 ├── src/main/resources/
 │   ├── assets/pdopn/                      # 资源文件（lang/models/textures）
-│   └── data/pdopn/                         # 数据文件（recipes）
+│   └── data/pdopn/                         # 数据文件（recipes/advancements）
 ├── gradle.properties
 └── README.md
 ```
@@ -243,10 +272,16 @@ Perpetual day or perpetual night/
 ### 构建命令
 
 ```bash
-./gradlew build            # 产物 → build/libs/pdopn-1.0.0 Fabric.jar
+./gradlew build            # 产物 → build/libs/pdopn-1.0.0.jar
+./gradlew test             # 运行单元测试
 ```
 
 构建同时自动生成 `-sources.jar` 源代码包。
+
+> **单元测试**覆盖纯数值逻辑（体温档位、偏移累加/衰减、时间与海拔修正、水体分类），
+> 全部位于 `src/test/java`，不依赖 Minecraft 运行时。
+> 被测逻辑集中在 `TemperatureBands` 与 `SaltLakeDetector.classify`，刻意与游戏引擎解耦。
+> 首次运行 `./gradlew test` 需要联网下载 JUnit（之后可加 `--offline`）。
 
 ### 技术栈
 
@@ -254,7 +289,7 @@ Perpetual day or perpetual night/
 - **API**：Fabric API 0.92.11+1.20.1
 - **映射**：Yarn 1.20.1+build.10
 - **构建工具**：Fabric Loom 1.17-SNAPSHOT
-- **Java**：17
+- **Java**：编译目标 17；**构建需 JDK 21+**（Loom 1.17 要求，已在 `gradle.properties` 中通过 `org.gradle.java.home` 指定）
 
 ---
 

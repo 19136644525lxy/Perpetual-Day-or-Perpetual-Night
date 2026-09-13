@@ -21,11 +21,40 @@ public class PdopnConfig {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static PdopnConfig instance;
 
+    /**
+     * 当前配置文件结构版本。
+     * 用途：字段增删或改名后（Gson 会默默丢弃无法映射的字段）可以据此识别旧配置并迁移，
+     * 而不是让玩家在升级模组后发现配置被重置且毫无提示。
+     */
+    public static final int CURRENT_CONFIG_VERSION = 2;
+
+    /** 配置文件结构版本（由文件内容读入；缺失视为 0，即 v1 之前的旧配置） */
+    public int configVersion = CURRENT_CONFIG_VERSION;
+
     /* ══════════ 温度系统配置 ══════════ */
     public TemperatureConfig temperature = new TemperatureConfig();
 
     /* ══════════ 口渴系统配置 ══════════ */
     public ThirstConfig thirst = new ThirstConfig();
+
+    /* ══════════ 实体增强配置 ══════════ */
+    public EntityConfig entity = new EntityConfig();
+
+    /* ══════════ 内部类：实体增强配置 ══════════ */
+    public static class EntityConfig {
+        /**
+         * 允许增强的实体 ID 白名单。
+         * 为空（默认）表示「除黑名单外全部允许」，与原行为一致。
+         * 填写后仅增强列表内的实体，例如 ["minecraft:zombie", "minecraft:skeleton"]。
+         */
+        public java.util.List<String> whitelist = new java.util.ArrayList<>();
+
+        /**
+         * 禁止增强的实体 ID 黑名单，优先级高于白名单。
+         * 用于避让同样改写生物属性的模组，例如 ["modid:elite_zombie"]。
+         */
+        public java.util.List<String> blacklist = new java.util.ArrayList<>();
+    }
 
     /* ══════════ 内部类：温度配置 ══════════ */
     public static class TemperatureConfig {
@@ -116,7 +145,12 @@ public class PdopnConfig {
             try (Reader reader = Files.newBufferedReader(configFile)) {
                 PdopnConfig config = GSON.fromJson(reader, PdopnConfig.class);
                 if (config != null) {
+                    boolean migrated = migrate(config);
                     LOGGER.info("[PDoPN] Config loaded from {}", configFile);
+                    if (migrated) {
+                        // 迁移后立即回写，避免每次启动重复迁移
+                        save(config);
+                    }
                     return config;
                 }
             } catch (Exception e) {
@@ -128,6 +162,30 @@ public class PdopnConfig {
         PdopnConfig config = new PdopnConfig();
         save(config);
         return config;
+    }
+
+    /**
+     * 旧配置结构迁移。
+     *
+     * @return true 表示发生了迁移、需要回写文件
+     */
+    private static boolean migrate(PdopnConfig config) {
+        if (config.configVersion >= CURRENT_CONFIG_VERSION) return false;
+
+        LOGGER.info("[PDoPN] Migrating config from version {} to {}",
+            config.configVersion, CURRENT_CONFIG_VERSION);
+
+        // v0 / v1 → v2：补齐可能缺失的引用类型字段。
+        // Gson 对文件中不存在的字段会保留默认值，但显式写出的 null 会展成 null，
+        // 这里统一兜底，避免下游出现 NPE。
+        if (config.temperature == null) config.temperature = new TemperatureConfig();
+        if (config.thirst == null) config.thirst = new ThirstConfig();
+        if (config.entity == null) config.entity = new EntityConfig();
+        if (config.entity.whitelist == null) config.entity.whitelist = new java.util.ArrayList<>();
+        if (config.entity.blacklist == null) config.entity.blacklist = new java.util.ArrayList<>();
+
+        config.configVersion = CURRENT_CONFIG_VERSION;
+        return true;
     }
 
     private static void save(PdopnConfig config) {

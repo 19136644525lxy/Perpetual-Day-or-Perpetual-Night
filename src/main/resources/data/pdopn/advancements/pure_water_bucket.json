@@ -1,0 +1,38 @@
+{
+  "display": {
+    "icon": {
+      "item": "pdopn:pure_water_bucket"
+    },
+    "title": {
+      "translate": "advancements.pdopn.pure_water_bucket.title"
+    },
+    "description": {
+      "translate": "advancements.pdopn.pure_water_bucket.description"
+    },
+    "frame": "goal",
+    "show_toast": true,
+    "announce_to_chat": true,
+    "hidden": false
+  },
+  "criteria": {
+    "has_pure_water_bucket": {
+      "trigger": "minecraft:inventory_changed",
+      "conditions": {
+        "items": [
+          {
+            "items": [
+              "pdopn:pure_water_bucket"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "rewards": {
+    "recipes": [
+      "pdopn:pure_water_bucket",
+      "pdopn:pure_water_bucket_blasting",
+      "pdopn:pure_water_bucket_smoking"
+    ]
+  }
+}

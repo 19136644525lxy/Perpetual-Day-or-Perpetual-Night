@@ -52,6 +52,23 @@ public final class SaltLakeDetector {
         return false;
     }
 
+    /**
+     * 纯函数：按群系 ID 与「是否命中咸水湖哈希」分类水体类型。
+     *
+     * <p>把分类逻辑从世界查询中剥离出来，便于直接单元测试，
+     * 也避免 {@code detectWaterType} 里出现多层 if 嵌套。
+     *
+     * @param biomeId        群系注册 ID 字符串（如 {@code minecraft:river}）
+     * @param saltLakeHit    {@link #isSaltLake} 的判定结果（调用方负责传入）
+     */
+    public static WorldWaterType classify(String biomeId, boolean saltLakeHit) {
+        if (biomeId == null) return WorldWaterType.NORMAL_WATER;
+        // 海洋类优先判定（含 frozen_ocean）
+        if (biomeId.contains("ocean")) return WorldWaterType.OCEAN;
+        if (!isCandidateBiome(biomeId)) return WorldWaterType.NORMAL_WATER;
+        return saltLakeHit ? WorldWaterType.SALT_LAKE : WorldWaterType.FRESHWATER_LAKE;
+    }
+
     /** 判定当前位置是否为淡水湖（候选群系 + 非咸水湖） */
     public static boolean isFreshwaterLake(BlockPos pos, RegistryKey<Biome> biomeKey) {
         return isCandidateBiome(biomeKey) && !isSaltLake(pos, biomeKey);

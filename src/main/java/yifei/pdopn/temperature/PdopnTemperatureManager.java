@@ -11,6 +11,10 @@ import net.minecraft.registry.RegistryKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
+import net.minecraft.sound.SoundCategory;
+import net.minecraft.sound.SoundEvents;
+import net.minecraft.text.Text;
+import net.minecraft.util.Formatting;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.world.World;
 import net.minecraft.world.biome.Biome;
@@ -18,8 +22,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import yifei.pdopn.config.PdopnConfig;
 import yifei.pdopn.mode.PdopnMode;
+import yifei.pdopn.storage.PlayerDataStore;
 
 import java.io.*;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -64,6 +70,15 @@ public final class PdopnTemperatureManager {
 
     /** 方块温度影响缓存条目 */
     private record BlockCache(double value, int computedAtTick) {}
+
+    /**
+     * 玩家上次所处的温度档位：UUID → 档位序号。
+     * 用于在跨入更危险档位时只提示一次，避免每 2 秒刷屏。
+     */
+    private final Map<UUID, Integer> lastBand = new ConcurrentHashMap<>();
+
+    /** 已提示过「接近最大生存天数」的玩家 */
+    private final Set<UUID> maxDaysWarned = ConcurrentHashMap.newKeySet();
 
     /** HUD 显示开关：默认开启 */
     private final Set<UUID> hudEnabled = Collections.synchronizedSet(new HashSet<>());
@@ -148,6 +163,8 @@ public final class PdopnTemperatureManager {
         lastEnvTemps.remove(playerId);
         envTempCache.remove(playerId);
         blockTempCache.remove(playerId);
+        lastBand.remove(playerId);
+        maxDaysWarned.remove(playerId);
         // 注意：hudEnabled 故意不清理，否则玩家关闭 HUD 后重新登录会被重置为开启
     }
 
@@ -200,17 +217,11 @@ public final class PdopnTemperatureManager {
         PdopnConfig.TemperatureConfig tcfg = PdopnConfig.getInstance().temperature;
         if (currentMode != PdopnMode.NORMAL) {
             perpetualTicks++;
-            // 每 tick 累加 dailyDriftAmount / 24000（=每天加 dailyDriftAmount）
-            double perTickDrift = tcfg.dailyDriftAmount / 24000.0;
-            accumulatedDrift += (currentMode == PdopnMode.PERPETUAL_DAY) ? perTickDrift : -perTickDrift;
+            // 每 tick 累加 dailyDriftAmount / 24000（= 每天累加 dailyDriftAmount）
+            accumulatedDrift += TemperatureBands.driftPerTick(
+                tcfg.dailyDriftAmount, currentMode == PdopnMode.PERPETUAL_DAY);
         } else if (Math.abs(accumulatedDrift) > 0.001) {
-            // 正常模式：偏移衰减
-            double decay = tcfg.driftDecayRate;
-            if (accumulatedDrift > 0) {
-                accumulatedDrift = Math.max(0, accumulatedDrift - decay);
-            } else {
-                accumulatedDrift = Math.min(0, accumulatedDrift + decay);
-            }
+            accumulatedDrift = TemperatureBands.decayDrift(accumulatedDrift, tcfg.driftDecayRate);
         }
 
         for (ServerWorld world : server.getWorlds()) {
@@ -466,6 +477,10 @@ public final class PdopnTemperatureManager {
         double abs = Math.abs(temp);
         boolean isHot = temp > 0;
 
+        // 跨档位预警（只在首次进入更危险档位时提示，避免刷屏）
+        warnOnBandEntry(player, abs, isHot);
+        warnOnMaxDays(player);
+
         if (abs < 10.0) return; // 舒适区间，无效果
 
         if (abs >= 10.0 && abs < 25.0) {
@@ -511,6 +526,53 @@ public final class PdopnTemperatureManager {
         }
     }
 
+    /* ══════════ 危险预警 ══════════ */
+
+    /**
+     * 玩家跨入更危险档位时给出声画预警。
+     *
+     * <p>此前体温跨过 70/85 只有状态效果，玩家在死亡前几乎没有任何预警；
+     * 这里在「危险」(4) 与「极限」(5) 两档入口播放音效 + ActionBar 提示。
+     */
+    private void warnOnBandEntry(ServerPlayerEntity player, double abs, boolean isHot) {
+        UUID id = player.getUuid();
+        int band = TemperatureBands.bandOf(abs);
+        Integer previous = lastBand.put(id, band);
+
+        // 仅在档位上升时提示，且只提示危险档以上
+        if (previous != null && band <= previous) return;
+        if (band < 4) return;
+
+        String key = isHot ? "pdopn.warn.heat" : "pdopn.warn.cold";
+        player.sendMessage(Text.translatable(key)
+            .formatted(isHot ? Formatting.RED : Formatting.AQUA), true);
+
+        // 危险档用较轻的提示音，极限档换成更急促的音效
+        var sound = isHot
+            ? (band >= 5 ? SoundEvents.ENTITY_BLAZE_HURT : SoundEvents.BLOCK_FIRE_EXTINGUISH)
+            : (band >= 5 ? SoundEvents.ENTITY_PLAYER_HURT_FREEZE : SoundEvents.BLOCK_GLASS_BREAK);
+        player.getWorld().playSound(null, player.getX(), player.getY(), player.getZ(),
+            sound, SoundCategory.PLAYERS, 0.8f, isHot ? 1.0f : 0.8f);
+    }
+
+    /**
+     * 达到配置的最大生存天数时提示一次。
+     * 该配置此前完全是装饰性的（无任何代码读取），这里至少让它具备可见的提示作用。
+     */
+    private void warnOnMaxDays(ServerPlayerEntity player) {
+        UUID id = player.getUuid();
+        if (maxDaysWarned.contains(id)) return;
+        if (currentMode == PdopnMode.NORMAL) return;
+
+        long days = getPerpetualDays();
+        if (days >= getMaxDays()) {
+            maxDaysWarned.add(id);
+            player.sendMessage(Text.translatable("pdopn.warn.maxdays")
+                .append(Text.literal(" (" + days + ")").formatted(Formatting.YELLOW))
+                .formatted(Formatting.GOLD), true);
+        }
+    }
+
     /* ══════════ HUD 显示 ══════════
      * HUD 渲染职责已迁移至 yifei.pdopn.hud.PdopnHudRenderer，
      * 本类仅通过 getBodyTemp / getLastEnvTemp 暴露数据。
@@ -524,62 +586,27 @@ public final class PdopnTemperatureManager {
 
     /* ══════════ 温度持久化 ══════════ */
 
-    /** 获取数据目录 */
-    private Path getDataDir() {
-        if (serverRef == null) return null;
-        return serverRef.getSavePath(net.minecraft.util.WorldSavePath.ROOT).resolve("pdopn");
-    }
+    /** 体温数据文件名 */
+    private static final String TEMP_FILE = "temperatures.properties";
 
     /** 加载单个玩家的体温数据 */
     private void loadPlayerData(UUID playerId) {
-        Path dir = getDataDir();
-        if (dir == null) {
-            bodyTemps.put(playerId, TemperatureData.DEFAULT_BODY_TEMP);
-            return;
-        }
-        File file = dir.resolve("temperatures.properties").toFile();
-        if (!file.exists()) {
-            bodyTemps.put(playerId, TemperatureData.DEFAULT_BODY_TEMP);
-            return;
-        }
-        try (InputStream in = new FileInputStream(file)) {
-            Properties props = new Properties();
-            props.load(in);
-            String val = props.getProperty(playerId.toString());
-            double temp = val != null ? Double.parseDouble(val) : TemperatureData.DEFAULT_BODY_TEMP;
-            bodyTemps.put(playerId, clamp(temp));
-        } catch (IOException | NumberFormatException e) {
-            LOGGER.warn("Failed to load temperature for {}: {}", playerId, e.getMessage());
-            bodyTemps.put(playerId, TemperatureData.DEFAULT_BODY_TEMP);
-        }
+        double temp = PlayerDataStore.loadDouble(
+            PlayerDataStore.resolveFile(serverRef, TEMP_FILE),
+            playerId,
+            TemperatureData.DEFAULT_BODY_TEMP,
+            PdopnTemperatureManager::clamp
+        );
+        bodyTemps.put(playerId, temp);
     }
 
     /** 保存单个玩家的体温数据 */
     private void savePlayerData(UUID playerId) {
-        Path dir = getDataDir();
-        if (dir == null) return;
-        try {
-            dir.toFile().mkdirs();
-            File file = dir.resolve("temperatures.properties").toFile();
-
-            // 加载现有数据
-            Properties props = new Properties();
-            if (file.exists()) {
-                try (InputStream in = new FileInputStream(file)) {
-                    props.load(in);
-                }
-            }
-
-            // 更新该玩家的数据
-            props.setProperty(playerId.toString(), String.valueOf(bodyTemps.getOrDefault(playerId, 0.0)));
-
-            // 写回文件
-            try (OutputStream out = new FileOutputStream(file)) {
-                props.store(out, "PDoPN Temperature Data");
-            }
-        } catch (IOException e) {
-            LOGGER.warn("Failed to save temperature for {}: {}", playerId, e.getMessage());
-        }
+        PlayerDataStore.saveDouble(
+            PlayerDataStore.resolveFile(serverRef, TEMP_FILE),
+            playerId,
+            bodyTemps.getOrDefault(playerId, TemperatureData.DEFAULT_BODY_TEMP)
+        );
     }
 
     /** 保存所有在线玩家数据（定期调用） */
@@ -594,17 +621,19 @@ public final class PdopnTemperatureManager {
 
     /* ══════════ 全局偏移持久化 ══════════ */
 
+    /** 全局偏移数据文件名 */
+    private static final String DRIFT_FILE = "drift.properties";
+
     /** 保存全局偏移数据（accumulatedDrift + perpetualTicks） */
-    private void saveGlobalData() {
-        Path dir = getDataDir();
-        if (dir == null) return;
+    public void saveGlobalData() {
+        Path path = PlayerDataStore.resolveFile(serverRef, DRIFT_FILE);
+        if (path == null) return;
         try {
-            dir.toFile().mkdirs();
-            File file = dir.resolve("drift.properties").toFile();
+            Files.createDirectories(path.getParent());
             Properties props = new Properties();
             props.setProperty("accumulatedDrift", String.valueOf(accumulatedDrift));
             props.setProperty("perpetualTicks", String.valueOf(perpetualTicks));
-            try (OutputStream out = new FileOutputStream(file)) {
+            try (OutputStream out = Files.newOutputStream(path)) {
                 props.store(out, "PDoPN Global Drift Data");
             }
         } catch (IOException e) {
@@ -614,11 +643,9 @@ public final class PdopnTemperatureManager {
 
     /** 加载全局偏移数据（服务器启动时调用） */
     public void loadGlobalData() {
-        Path dir = getDataDir();
-        if (dir == null) return;
-        File file = dir.resolve("drift.properties").toFile();
-        if (!file.exists()) return;
-        try (InputStream in = new FileInputStream(file)) {
+        Path path = PlayerDataStore.resolveFile(serverRef, DRIFT_FILE);
+        if (path == null || !Files.exists(path)) return;
+        try (InputStream in = Files.newInputStream(path)) {
             Properties props = new Properties();
             props.load(in);
             accumulatedDrift = Double.parseDouble(props.getProperty("accumulatedDrift", "0.0"));
@@ -641,5 +668,14 @@ public final class PdopnTemperatureManager {
     /** 永昼 / 永夜模式已持续的完整天数（供 HUD 显示；1 天 = 24000 tick） */
     public long getPerpetualDays() {
         return perpetualTicks / 24000L;
+    }
+
+    /**
+     * 清空累计偏移与持续计数。
+     * 之前偏移只增不减且无任何缓解手段，中后期存档无法挽回，只能改配置重启。
+     */
+    public void resetAccumulatedDrift() {
+        accumulatedDrift = 0.0;
+        perpetualTicks = 0L;
     }
 }

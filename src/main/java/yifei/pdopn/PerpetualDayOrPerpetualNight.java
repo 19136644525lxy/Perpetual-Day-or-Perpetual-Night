@@ -65,6 +65,12 @@ public class PerpetualDayOrPerpetualNight implements ModInitializer, PdopnComman
     /** 口渴系统管理器 */
     private static final PdopnThirstManager thirstManager = new PdopnThirstManager();
 
+    /**
+     * 指令处理器实例（依赖注入，替代原先的静态 setter 注入）。
+     * 需要被 {@link #onModeChange} 访问以通知模式管理层，故保持静态引用。
+     */
+    private static PdopnCommand commandHandler;
+
     @Override
     public void onInitialize() {
         LOGGER.info("[PDoPN] Perpetual Day or Perpetual Night 模组已加载");
@@ -75,12 +81,12 @@ public class PerpetualDayOrPerpetualNight implements ModInitializer, PdopnComman
         // 注册净水烧炼配方类型（只接受水瓶，防止贵重药水被误烧）
         PdopnRecipes.register();
 
-        // 注入模式变更监听器，实现指令层与模式管理层的解耦 (DIP)
-        PdopnCommand.setModeChangeListener(this);
+        // 构造指令处理器：通过构造函数注入依赖（DIP）
+        commandHandler = new PdopnCommand(this, temperatureManager, thirstManager);
 
         // 注册指令
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
-            PdopnCommand.register(dispatcher)
+            commandHandler.register(dispatcher)
         );
 
         // 实体加载时按当前模式施加修改（覆盖新生成和区块加载的生物）
@@ -90,10 +96,6 @@ public class PerpetualDayOrPerpetualNight implements ModInitializer, PdopnComman
 
         // 每个服务端 tick 结束时锁定时间 + 温度更新
         ServerTickEvents.END_SERVER_TICK.register(this::onServerTick);
-
-        // 暴露温度管理器给指令层
-        PdopnCommand.setTemperatureManager(temperatureManager);
-        PdopnCommand.setThirstManager(thirstManager);
 
         // 口渴系统关联温度管理器
         thirstManager.setTemperatureManager(temperatureManager);
