@@ -109,6 +109,21 @@ Jump to the English introduction: [README_en.md](https://github.com/19136644525l
 | `≤ -45°C` | 缓慢 II + 挖掘疲劳 II |
 | `≤ -25°C` | 缓慢 I |
 
+### 温度致死伤害类型
+
+体温触顶 / 触底的致死伤害使用模组自定义伤害类型，因此死亡消息是专属文本，
+而非原版通用的「被烧死了」：
+
+| 场景 | 伤害类型 | 死亡消息 |
+|---|---|---|
+| `≥ 100°C` | `pdopn:heat` | `%s 的体温失控，被高温烧尽` |
+| `≤ -100°C` | `pdopn:cold` | `%s 的体温失控，被严寒冻毙` |
+
+> 定义位于 `data/pdopn/damage_type/heat.json` 与 `cold.json`。
+> 死亡消息文本键由 `"death.attack." + message_id` 决定，
+> 因此文本键为 `death.attack.pdopn.heat` / `death.attack.pdopn.cold`
+> （另含 `.player` 变体，用于死亡时有攻击者的场合）。
+
 ---
 
 ## 口渴系统

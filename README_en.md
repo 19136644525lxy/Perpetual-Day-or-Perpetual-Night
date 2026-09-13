@@ -109,6 +109,21 @@ All commands require OP permission (default level 2).
 | `≤ -45°C` | Slowness II + Mining Fatigue II |
 | `≤ -25°C` | Slowness I |
 
+### Lethal Temperature Damage Types
+
+The lethal damage at the temperature extremes uses custom damage types,
+so the death message is mod-specific rather than the generic vanilla text:
+
+| Case | Damage type | Death message |
+|---|---|---|
+| `≥ 100°C` | `pdopn:heat` | `%s's body temperature ran away and was consumed by extreme heat` |
+| `≤ -100°C` | `pdopn:cold` | `%s's body temperature ran away and froze to death` |
+
+> Defined in `data/pdopn/damage_type/heat.json` and `cold.json`.
+> The translation key is `"death.attack." + message_id`, i.e.
+> `death.attack.pdopn.heat` / `death.attack.pdopn.cold`
+> (plus `.player` variants used when there is a killer).
+
 ---
 
 ## Thirst System

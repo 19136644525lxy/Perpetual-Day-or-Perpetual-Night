@@ -21,6 +21,7 @@ import net.minecraft.world.biome.Biome;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import yifei.pdopn.config.PdopnConfig;
+import yifei.pdopn.damage.PdopnDamageTypes;
 import yifei.pdopn.mode.PdopnMode;
 import yifei.pdopn.storage.PlayerDataStore;
 
@@ -266,12 +267,12 @@ public final class PdopnTemperatureManager {
                     applyEffects(player, newTemp);
                 }
 
-                // 致死检测
+                // 致死检测：使用模组自定义伤害类型，以显示专属死因
                 if (newTemp >= TemperatureData.MAX_TEMP) {
-                    player.damage(player.getDamageSources().onFire(),
+                    player.damage(PdopnDamageTypes.heat(player),
                         player.getMaxHealth() * 0.25f);
                 } else if (newTemp <= TemperatureData.MIN_TEMP) {
-                    player.damage(player.getDamageSources().freeze(),
+                    player.damage(PdopnDamageTypes.cold(player),
                         player.getMaxHealth() * 0.25f);
                 }
             }
