@@ -4,6 +4,7 @@
   "pdopn.mode.normal": "Normal",
 
   "pdopn.feedback.current_mode": "Current mode: ",
+  "pdopn.error.player_only": "This command can only be run by a player.",
   "pdopn.feedback.already_normal": "Already in normal day/night cycle mode.",
   "pdopn.feedback.cycle_restored": "Normal day/night cycle has been restored.",
   "pdopn.feedback.switched_day": "Switched to Perpetual Day mode.",

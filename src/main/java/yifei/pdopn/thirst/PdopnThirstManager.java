@@ -2,12 +2,16 @@ package yifei.pdopn.thirst;
 
 import net.minecraft.entity.effect.StatusEffectInstance;
 import net.minecraft.entity.effect.StatusEffects;
+import net.minecraft.item.ItemStack;
 import net.minecraft.registry.RegistryKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
+import net.minecraft.sound.SoundCategory;
+import net.minecraft.sound.SoundEvents;
 import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
+import net.minecraft.util.Hand;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.world.World;
 import net.minecraft.world.biome.Biome;
@@ -20,6 +24,7 @@ import java.io.*;
 import java.nio.file.Path;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
 
 /**
  * 口渴系统核心管理器。
@@ -39,8 +44,26 @@ public final class PdopnThirstManager {
     /** 直接饮水冷却表：UUID → 上次饮水的 tick 数（防止快速连击） */
     private final Map<UUID, Long> drinkCooldowns = new ConcurrentHashMap<>();
 
+    /**
+     * 待加载数据的玩家队列。
+     * 玩家 JOIN 事件早于服务端首个 tick，此时尚未持有 serverRef 与存档路径，
+     * 直接加载会永远读不到存档（旧实现的持久化失效根因）。
+     * 因此把加载推迟到 tick() 中 serverRef 就绪之后执行。
+     */
+    private final Queue<PendingLoad> pendingLoads = new ConcurrentLinkedQueue<>();
+
+    /**
+     * 等待重生重置的玩家（UUID）。
+     * 死亡时登记，重生后（重新恢复存活）由 tick() 兜底重置；
+     * 即使 onDeath 注入因版本变化等原因失效，口渴值也不会永久卡在 0。
+     */
+    private final Set<UUID> awaitingRespawn = ConcurrentHashMap.newKeySet();
+
     /** 服务端引用（用于持久化路径） */
     private MinecraftServer serverRef;
+
+    /** 玩家数据加载任务 */
+    private record PendingLoad(UUID playerId, ServerPlayerEntity player) {}
 
     /** Tick 计数器 */
     private int tickCount = 0;
@@ -73,10 +96,9 @@ public final class PdopnThirstManager {
         setHydration(playerId, getHydration(playerId) + amount);
     }
 
-    /** 玩家加入时加载数据 */
+    /** 玩家加入时：排队等待数据加载（真正的加载在 tick() 中执行） */
     public void onPlayerJoin(ServerPlayerEntity player) {
-        UUID id = player.getUuid();
-        loadPlayerData(id);
+        pendingLoads.add(new PendingLoad(player.getUuid(), player));
     }
 
     /** 玩家离开时保存并清理 */
@@ -85,6 +107,25 @@ public final class PdopnThirstManager {
         hydrationMap.remove(playerId);
         lastHydration.remove(playerId);
         drinkCooldowns.remove(playerId);
+        awaitingRespawn.remove(playerId);
+    }
+
+    /**
+     * 玩家死亡时重置口渴值为初始值（100）。
+     * 同时登记等待重生重置，作为二次保险。
+     */
+    public void onPlayerDeath(ServerPlayerEntity player) {
+        UUID id = player.getUuid();
+        awaitingRespawn.add(id);
+        resetHydration(id);
+    }
+
+    /** 将口渴值重置为配置的初始值，并清理趋势/冷却状态 */
+    private void resetHydration(UUID id) {
+        double initial = PdopnConfig.getInstance().thirst.initialValue;
+        setHydration(id, initial);
+        lastHydration.put(id, initial);
+        drinkCooldowns.remove(id);
     }
 
     /* ══════════ 直接饮水 API ══════════ */
@@ -130,6 +171,14 @@ public final class PdopnThirstManager {
             // 淡水湖：安全恢复
             addHydration(id, cfg.freshwaterDrinkRestore);
         }
+
+        // 播放原版喝水音效 + 挥手动画（参照 LegendarySurvivalOverhaul 实现）
+        player.getWorld().playSound(
+            null, player.getX(), player.getY(), player.getZ(),
+            SoundEvents.ENTITY_GENERIC_DRINK,
+            SoundCategory.PLAYERS, 1.0f, 1.0f
+        );
+        player.swingHand(Hand.MAIN_HAND, true);
 
         // 发送反馈（Actionbar，遵循用户偏好）
         Text feedback = buildDrinkFeedback(waterType, dehydrated);
@@ -193,6 +242,21 @@ public final class PdopnThirstManager {
         tickCount++;
         PdopnConfig.ThirstConfig cfg = PdopnConfig.getInstance().thirst;
 
+        // 服务端就绪后补做玩家数据加载（JOIN 时还没有存档路径）
+        if (!pendingLoads.isEmpty()) {
+            for (ServerPlayerEntity player : server.getPlayerManager().getPlayerList()) {
+                pendingLoads.removeIf(pending -> {
+                    if (!pending.playerId().equals(player.getUuid())) return false;
+                    loadPlayerData(pending.playerId());
+                    // 加载前若已死亡，则立即重置，避免把 0 写回
+                    if (awaitingRespawn.contains(pending.playerId())) {
+                        resetHydration(pending.playerId());
+                    }
+                    return true;
+                });
+            }
+        }
+
         for (ServerWorld world : server.getWorlds()) {
             for (ServerPlayerEntity player : world.getPlayers()) {
                 UUID id = player.getUuid();
@@ -204,6 +268,20 @@ public final class PdopnThirstManager {
                 // 创造/旁观模式不消耗
                 if (player.isCreative() || player.isSpectator()) {
                     continue;
+                }
+
+                // 死亡状态下不消耗口渴（玩家死亡后到重生前，实体仍在 world.getPlayers() 中）
+                // 重置由 onPlayerDeath 负责；此处仅做登记，供重生时兜底
+                if (player.isDead() || player.getHealth() <= 0.0f) {
+                    awaitingRespawn.add(id);
+                    continue;
+                }
+
+                // 重生兜底：曾死亡且此刻已恢复存活 → 重置口渴
+                // 即使 onDeath 注入失效（例如版本变更导致注入点不再存在），也不会卡在 0
+                if (awaitingRespawn.remove(id)) {
+                    resetHydration(id);
+                    current = getHydration(id);
                 }
 
                 // 计算口渴变化
@@ -249,7 +327,14 @@ public final class PdopnThirstManager {
 
     /* ══════════ 消耗计算 ══════════ */
 
-    /** 计算环境消耗（群系系数 + 体温联动） */
+    /**
+     * 计算环境消耗。
+     * 返回值语义：正数 = 本 tick 应从口渴值中扣除的量（调用方用 {@code delta -=}）。
+     *
+     * <p>旧实现返回 {@code base * (系数 - 1)}，在寒冷群系（系数 0.5 &lt; 1）会得到负数，
+     * 再被 {@code delta -=} 减去后变成“环境补水”，导致雪原等地口渴不降反升。
+     * 现在统一返回非负的消耗量。
+     */
     private double calcEnvironmentDrain(ServerPlayerEntity player, ServerWorld world) {
         PdopnConfig.ThirstConfig cfg = PdopnConfig.getInstance().thirst;
         double base = cfg.baseDrainRate;
@@ -263,7 +348,8 @@ public final class PdopnThirstManager {
         // 体温联动
         double tempFactor = getTemperatureFactor(player);
 
-        return base * (biomeFactor * dimFactor * tempFactor - 1.0);
+        // 寒冷环境系数小于 1 → 消耗更慢，但绝不补水
+        return base * biomeFactor * dimFactor * tempFactor;
     }
 
     /** 获取群系口渴系数 */
@@ -341,7 +427,10 @@ public final class PdopnThirstManager {
         return drain;
     }
 
-    /** 计算环境恢复（雨/水） */
+    /**
+     * 计算环境恢复。
+     * 返回值语义：正数 = 补充口渴，负数 = 额外脱水（调用方用 {@code delta +=}）。
+     */
     private double calcEnvironmentRestore(ServerPlayerEntity player, ServerWorld world) {
         PdopnConfig.ThirstConfig cfg = PdopnConfig.getInstance().thirst;
         double restore = 0.0;
@@ -357,12 +446,12 @@ public final class PdopnThirstManager {
             var biomeKey = biomeEntry.getKey().orElse(null);
             if (biomeKey != null) {
                 String biomeId = biomeKey.getValue().toString();
-                if (biomeId.contains("ocean") || biomeId.contains("frozen_ocean")) {
-                    // 海水：强脱水
+                if (biomeId.contains("ocean")) {
+                    // 海水：强脱水（restore 为负 → 口渴下降）
                     restore -= cfg.seawaterStandingDrain;
                 } else if (SaltLakeDetector.isSaltLake(player.getBlockPos(), biomeKey)) {
                     // 咸水湖：中等脱水（比海洋弱）
-                    // saltLakeDrinkDrain 原为"直接饮用脱水值"，按系数 0.0002 折算为"站在水中速率"
+                    // saltLakeDrinkDrain 原为“直接饮用脱水值”，按系数 0.0002 折算为“站在水中速率”
                     restore -= Math.abs(cfg.saltLakeDrinkDrain) * 0.0002;
                 } else {
                     // 淡水：缓慢恢复
@@ -376,25 +465,46 @@ public final class PdopnThirstManager {
 
     /* ══════════ 食物/饮品使用处理（由 Mixin 调用） ══════════ */
 
-    /** 处理玩家使用物品后的口渴变化 */
-    public void onItemUsed(ServerPlayerEntity player, net.minecraft.item.Item item) {
+    /**
+     * 处理玩家使用物品后的口渴变化。由 {@code ItemMixin} 注入 {@code Item#finishUsing} 调用。
+     *
+     * <p>注意：本方法此前无任何调用方，导致 ThirstData 中定义的食物 / 饮品恢复
+     * 全部失效；现已通过 Item / Bucket 两个 Mixin 接回。
+     *
+     * @param stack 被使用的物品（用于区分含水药水与普通药水）
+     */
+    public void onItemUsed(ServerPlayerEntity player, ItemStack stack) {
+        if (stack == null || stack.isEmpty()) return;
+        net.minecraft.item.Item item = stack.getItem();
         PdopnConfig.ThirstConfig cfg = PdopnConfig.getInstance().thirst;
+        UUID id = player.getUuid();
 
-        // 检查饮品
+        // 1. 生水（水桶 / 含水水瓶）→ 脱水，需先烧炼净化
+        if (ThirstData.isDehydratingDrink(item, stack)) {
+            addHydration(id, cfg.seawaterDrinkDrain);
+            return;
+        }
+
+        // 2. 其他饮品（蜂蜜瓶 / 炖汤等）
         if (ThirstData.isDrinkable(item)) {
-            addHydration(player.getUuid(), ThirstData.getDrinkRestore(item));
+            double restore = ThirstData.getDrinkRestore(item);
+            // 蜂蜜瓶恢复量跟随配置
+            if (item == net.minecraft.item.Items.HONEY_BOTTLE) {
+                restore = cfg.honeyRestore;
+            }
+            addHydration(id, restore);
             return;
         }
 
-        // 检查含水食物
+        // 3. 含水食物
         if (ThirstData.hasFoodRestore(item)) {
-            addHydration(player.getUuid(), ThirstData.getFoodRestore(item));
+            addHydration(id, ThirstData.getFoodRestore(item));
             return;
         }
 
-        // 检查脱水食物
+        // 4. 脱水食物
         if (ThirstData.isDehydrating(item)) {
-            addHydration(player.getUuid(), ThirstData.getDehydration(item));
+            addHydration(id, ThirstData.getDehydration(item));
         }
     }
 

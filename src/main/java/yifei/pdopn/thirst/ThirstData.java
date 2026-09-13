@@ -2,9 +2,12 @@ package yifei.pdopn.thirst;
 
 import net.minecraft.item.Item;
 import net.minecraft.item.Items;
+import net.minecraft.potion.PotionUtil;
+import net.minecraft.potion.Potions;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * 口渴系统所有静态数据常量。
@@ -34,6 +37,26 @@ public final class ThirstData {
 
     public static boolean isDrinkable(Item item) {
         return DRINK_RESTORE.containsKey(item);
+    }
+
+    /* ══════════ 会加剧口渴的饮品（生水等） ══════════ */
+
+    /** 直接饮用会脱水的饮品：原版水桶、脏水瓶（含水药水） */
+    private static final Set<Item> DEHYDRATING_DRINKS = Set.of(
+        Items.WATER_BUCKET,
+        Items.POTION
+    );
+
+    /**
+     * 判断该饮品是否会导致脱水。
+     * 原版水瓶（POTION）中只有“含水”的水瓶才算脏水，其余药水不受影响。
+     */
+    public static boolean isDehydratingDrink(Item item, net.minecraft.item.ItemStack stack) {
+        if (item == Items.WATER_BUCKET) return true;
+        if (item == Items.POTION) {
+            return PotionUtil.getPotion(stack) == Potions.WATER;
+        }
+        return false;
     }
 
     /* ══════════ 含水食物恢复量 ══════════ */
@@ -87,9 +110,18 @@ public final class ThirstData {
 
     /* ══════════ 需要阻止饮用的原版物品 ══════════ */
 
-    /** 这些物品不能直接饮用，需要烧炼 */
-    public static boolean isBlockedDrink(Item item) {
-        return item == Items.POTION      // 原版水瓶
-            || item == Items.MILK_BUCKET; // 原版牛奶桶
+    /**
+     * 判断该物品是否为“脏水”，必须先烧炼净化才能饮用。
+     *
+     * <p>旧实现用 {@code item == Items.POTION} 判定，而治疗 / 力量 / 抗火等药水
+     * 共用同一个 {@code PotionItem} 类，导致<b>所有药水都被禁用</b>。
+     * 现在仅拦截真正含水的水瓶。
+     */
+    public static boolean isBlockedDrink(Item item, net.minecraft.item.ItemStack stack) {
+        if (item == Items.MILK_BUCKET) return true;   // 牛奶桶同样需要净化
+        if (item == Items.POTION) {
+            return PotionUtil.getPotion(stack) == Potions.WATER;
+        }
+        return false;
     }
 }

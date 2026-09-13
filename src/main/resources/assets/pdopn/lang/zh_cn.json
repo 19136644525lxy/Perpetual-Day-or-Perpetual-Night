@@ -4,6 +4,7 @@
   "pdopn.mode.normal": "正常",
 
   "pdopn.feedback.current_mode": "当前模式：",
+  "pdopn.error.player_only": "该指令只能由玩家执行。",
   "pdopn.feedback.already_normal": "当前已是正常昼夜循环模式。",
   "pdopn.feedback.cycle_restored": "正常昼夜循环已恢复。",
   "pdopn.feedback.switched_day": "已切换为永昼模式。",

@@ -11,7 +11,6 @@ import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
 import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.network.ServerPlayNetworkHandler;
 import net.minecraft.server.network.ServerPlayerEntity;
@@ -22,6 +21,7 @@ import net.minecraft.util.Formatting;
 import net.minecraft.util.Hand;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.hit.BlockHitResult;
+import net.minecraft.util.hit.HitResult;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.world.GameRules;
 import org.slf4j.Logger;
@@ -31,6 +31,7 @@ import yifei.pdopn.entity.PdopnEntityModifier;
 import yifei.pdopn.hud.PdopnHudRenderer;
 import yifei.pdopn.mode.PdopnMode;
 import yifei.pdopn.items.PdopnItems;
+import yifei.pdopn.callback.PdopnPlayerDeathCallback;
 import yifei.pdopn.temperature.PdopnTemperatureManager;
 import yifei.pdopn.thirst.PdopnThirstManager;
 
@@ -117,8 +118,17 @@ public class PerpetualDayOrPerpetualNight implements ModInitializer, PdopnComman
             thirstManager.onPlayerLeave(handler.getPlayer().getUuid());
         });
 
+        // 玩家死亡时：口渴重置为初始值，体温重置（全局偏移保留）
+        // 通过 Mixin 回调机制注册（PlayerEntityDeathMixin 调用此回调）
+        PdopnPlayerDeathCallback.register(player -> {
+            temperatureManager.onPlayerDeath(player);
+            thirstManager.onPlayerDeath(player);
+        });
+
         // 玩家右键水方块 → 直接饮水
-        // 触发条件：空手或手持无功能物品 + 视线指向水方块
+        // 参照 LegendarySurvivalOverhaul 实现：
+        // 水方块没有碰撞箱，UseBlockCallback 传来的 hitResult 指向水底方块，
+        // 因此用 Entity.raycast(distance, tickDelta, includeFluids=true) 重新进行包含流体的射线检测
         UseBlockCallback.EVENT.register((player, world, hand, hitResult) -> {
             // 仅服务端处理
             if (world.isClient) return ActionResult.PASS;
@@ -127,30 +137,26 @@ public class PerpetualDayOrPerpetualNight implements ModInitializer, PdopnComman
             // 潜行时跳过（玩家潜行时正常右键方块，如打开容器）
             if (player.isSneaking()) return ActionResult.PASS;
 
-            // 拦截空手 / 棒 / 棍 / 红粉 / 火把 等无功能物品
+            // 仅空手允许饮水（LegendarySurvivalOverhaul 也是仅空手触发）
             ItemStack stack = player.getStackInHand(hand);
-            boolean canDrink = stack.isEmpty()
-                || stack.getItem() == Items.STICK
-                || stack.getItem() == Items.BONE
-                || stack.getItem() == Items.BLAZE_ROD
-                || stack.getItem() == Items.REDSTONE
-                || stack.getItem() == Items.GLOWSTONE_DUST
-                || stack.getItem() == Items.SUGAR;
-            if (!canDrink) return ActionResult.PASS;
+            if (!stack.isEmpty()) return ActionResult.PASS;
 
-            // 视线必须命中方块
-            if (!(hitResult instanceof BlockHitResult)) return ActionResult.PASS;
-            BlockPos pos = ((BlockHitResult) hitResult).getBlockPos();
-            BlockState state = world.getBlockState(pos);
+            // 用 includeFluids=true 重新进行射线检测，专门捕获流体方块
+            // 4.5 格为 1.20.1 生存模式默认交互距离
+            HitResult fluidHit = player.raycast(4.5, 1.0f, true);
+            if (fluidHit.getType() != HitResult.Type.BLOCK) return ActionResult.PASS;
 
-            // 必须是水方块
+            BlockPos waterPos = ((BlockHitResult) fluidHit).getBlockPos();
+            BlockState state = world.getBlockState(waterPos);
+
+            // 必须是水方块（过滤岩浆等其他流体）
             if (!state.isOf(Blocks.WATER)) return ActionResult.PASS;
 
             // 转发到口渴管理器处理
             boolean handled = thirstManager.onDrinkWaterFromWorld(
                 (ServerPlayerEntity) player,
                 (ServerWorld) world,
-                pos
+                waterPos
             );
             return handled ? ActionResult.SUCCESS : ActionResult.PASS;
         });

@@ -23,17 +23,7 @@ public final class TemperatureData {
 
     public static final double MIN_TEMP = -100.0;
     public static final double MAX_TEMP = 100.0;
-    public static final double COMFORT_LOW = -10.0;
-    public static final double COMFORT_HIGH = 10.0;
     public static final double DEFAULT_BODY_TEMP = 0.0;
-
-    /** 默认最大生存天数 */
-    public static final int DEFAULT_MAX_DAYS = 1000;
-    /** 最大漂移幅度 (°C) */
-    public static final double MAX_DRIFT = 20.0;
-
-    /** 基础环境系数（体温趋向环境温度的速率） */
-    public static final double BASE_ENV_RATE = 0.005;
 
     /* ══════════ 维度基础温度 ══════════ */
 
@@ -287,10 +277,10 @@ public final class TemperatureData {
         return -5.0;                                   // 夜晚
     }
 
-    /* ══════════ 天气修正 ══════════ */
-
-    public static final double RAIN_MODIFIER = -3.0;
-    public static final double THUNDER_MODIFIER = -5.0;
+    /* ══════════ 天气修正 ══════════
+     * 实际数值来自 PdopnConfig.temperature 的 rainModifier / thunderModifier，
+     * 此处不再重复定义常量（旧常量无人引用且会与配置产生两套数值）。
+     */
 
     /* ══════════ 海拔修正 ══════════ */
 

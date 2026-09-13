@@ -32,6 +32,7 @@ bin/
 
 run/
 temp/
+logs/
 
 # java
 

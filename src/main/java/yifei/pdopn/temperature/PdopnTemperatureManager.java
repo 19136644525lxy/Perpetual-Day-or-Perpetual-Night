@@ -23,6 +23,7 @@ import java.io.*;
 import java.nio.file.Path;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
 
 /**
  * 温度系统核心管理器。
@@ -42,8 +43,16 @@ public final class PdopnTemperatureManager {
     /** HUD 显示开关：默认开启 */
     private final Set<UUID> hudEnabled = Collections.synchronizedSet(new HashSet<>());
 
-    /** 最大生存天数（可指令修改，存档级别） */
-    private int maxDays = PdopnConfig.getInstance().temperature.defaultMaxDays;
+    /**
+     * 待加载数据的玩家队列。
+     * 玩家 JOIN 事件早于服务端首个 tick，此时尚未持有 serverRef 与存档路径，
+     * 直接加载会永远读不到存档（旧实现的持久化失效根因）。
+     * 因此把加载推迟到 tick() 中 serverRef 就绪之后执行。
+     */
+    private final Queue<PendingLoad> pendingLoads = new ConcurrentLinkedQueue<>();
+
+    /** 玩家数据加载任务 */
+    private record PendingLoad(UUID playerId, ServerPlayerEntity player) {}
 
     /** 当前模式引用（由主类每 tick 更新） */
     private PdopnMode currentMode = PdopnMode.NORMAL;
@@ -73,8 +82,19 @@ public final class PdopnTemperatureManager {
         // 切换到正常模式：不取反，由 tick() 中的衰减逻辑自然回到 0
         this.currentMode = mode;
     }
-    public int getMaxDays() { return maxDays; }
-    public void setMaxDays(int days) { this.maxDays = Math.max(1, days); }
+    public int getMaxDays() {
+        // 直接从配置读取，避免字段与配置文件脱节
+        return PdopnConfig.getInstance().temperature.defaultMaxDays;
+    }
+
+    /**
+     * 设置最大生存天数。
+     * 旧实现只改内存字段，重启后丢失且与配置文件不一致；现在写回配置。
+     */
+    public void setMaxDays(int days) {
+        PdopnConfig.getInstance().temperature.defaultMaxDays = Math.max(1, days);
+        PdopnConfig.getInstance().save();
+    }
 
     public double getBodyTemp(UUID playerId) {
         return bodyTemps.getOrDefault(playerId, TemperatureData.DEFAULT_BODY_TEMP);
@@ -89,10 +109,10 @@ public final class PdopnTemperatureManager {
         return lastEnvTemps.getOrDefault(playerId, 0.0);
     }
 
-    /** 玩家加入时加载体温数据 */
+    /** 玩家加入时：排队等待数据加载（真正的加载在 tick() 中执行） */
     public void onPlayerJoin(ServerPlayerEntity player) {
         UUID id = player.getUuid();
-        loadPlayerData(id);
+        pendingLoads.add(new PendingLoad(id, player));
         hudEnabled.add(id); // 默认显示 HUD
     }
 
@@ -101,6 +121,13 @@ public final class PdopnTemperatureManager {
         savePlayerData(playerId);
         bodyTemps.remove(playerId);
         lastEnvTemps.remove(playerId);
+    }
+
+    /** 玩家死亡时重置体温为默认值（偏移值保持全局累计，不重置） */
+    public void onPlayerDeath(ServerPlayerEntity player) {
+        UUID id = player.getUuid();
+        bodyTemps.put(id, TemperatureData.DEFAULT_BODY_TEMP);
+        lastEnvTemps.put(id, TemperatureData.DEFAULT_BODY_TEMP);
     }
 
     /* ══════════ HUD 开关 ══════════ */
@@ -128,6 +155,17 @@ public final class PdopnTemperatureManager {
         serverRef = server;
         tickCount++;
 
+        // 服务端就绪后补做玩家数据加载（JOIN 时还没有存档路径）
+        if (!pendingLoads.isEmpty()) {
+            for (ServerPlayerEntity player : server.getPlayerManager().getPlayerList()) {
+                pendingLoads.removeIf(pending -> {
+                    if (!pending.playerId().equals(player.getUuid())) return false;
+                    loadPlayerData(pending.playerId());
+                    return true;
+                });
+            }
+        }
+
         // ── 偏移累加/衰减逻辑 ──
         // 永昼/永夜：每天累加 dailyDriftAmount（每 tick 累加一小部分），持续不衰减
         // 正常模式：偏移按 driftDecayRate 衰减回 0
@@ -154,6 +192,12 @@ public final class PdopnTemperatureManager {
 
                 // 创造/旁观模式不受温度影响
                 boolean immune = player.isCreative() || player.isSpectator();
+
+                // 死亡状态下不消耗体温（玩家死亡后到重生前，实体仍在 world.getPlayers() 中）
+                // 体温重置由 onPlayerDeath 负责，全局偏移不受影响继续累计
+                if (player.isDead() || player.getHealth() <= 0.0f) {
+                    continue;
+                }
 
                 // 计算环境温度（含偏移）
                 double envTemp = calcEnvironmentTemp(player, currentMode);
@@ -228,7 +272,7 @@ public final class PdopnTemperatureManager {
         // 3. 时间修正
         double timeMod = TemperatureData.getTimeModifier(world.getTimeOfDay());
 
-        // 4. 天气修正
+        // 4. 天气修正（读取配置，旧实现绕过了配置导致 rainModifier/thunderModifier 改了不起作用）
         double weatherMod = 0.0;
         if (world.isRaining()) {
             weatherMod = world.isThundering()

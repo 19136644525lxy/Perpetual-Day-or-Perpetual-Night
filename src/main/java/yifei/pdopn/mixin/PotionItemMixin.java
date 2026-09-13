@@ -16,7 +16,8 @@ import yifei.pdopn.thirst.ThirstData;
 
 /**
  * 拦截原版水瓶（PotionItem）的使用动作。
- * 阻止玩家直接饮用未净化的水瓶，提示需要烧炼。
+ * 仅阻止玩家直接饮用“脏水”（含水的水瓶），提示需要烧炼净化。
+ * 其他药水（治疗 / 力量 / 抗火等）不受影响。
  */
 @Mixin(PotionItem.class)
 public class PotionItemMixin {
@@ -26,7 +27,7 @@ public class PotionItemMixin {
                              CallbackInfoReturnable<TypedActionResult<ItemStack>> cir) {
         if (!world.isClient && user instanceof ServerPlayerEntity player) {
             ItemStack stack = player.getStackInHand(hand);
-            if (ThirstData.isBlockedDrink(stack.getItem())) {
+            if (ThirstData.isBlockedDrink(stack.getItem(), stack)) {
                 player.sendMessage(
                     Text.translatable("pdopn.thirst.need_purify")
                         .formatted(net.minecraft.util.Formatting.RED),

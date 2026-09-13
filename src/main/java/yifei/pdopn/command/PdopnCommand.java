@@ -91,13 +91,32 @@ public final class PdopnCommand {
 
     /* ────────── 子命令实现 ────────── */
 
+    /**
+     * 解析指令执行者。
+     * 控制台 / 命令方块 / 其他非玩家执行者没有玩家实体，
+     * 旧实现直接调用 {@code source.getPlayer()} 会抛 NPE 导致指令崩溃。
+     *
+     * @return 执行者玩家；非玩家执行者返回 null（并已反馈错误）
+     */
+    private static ServerPlayerEntity requirePlayer(ServerCommandSource source) {
+        ServerPlayerEntity player = source.getPlayer();
+        if (player == null) {
+            source.sendError(Text.translatable("pdopn.error.player_only"));
+        }
+        return player;
+    }
+
     private static int switchToDay(CommandContext<ServerCommandSource> context) {
-        executeSwitch(context.getSource().getPlayer(), PdopnMode.PERPETUAL_DAY);
+        ServerPlayerEntity player = requirePlayer(context.getSource());
+        if (player == null) return 0;
+        executeSwitch(player, PdopnMode.PERPETUAL_DAY);
         return 1;
     }
 
     private static int switchToNight(CommandContext<ServerCommandSource> context) {
-        executeSwitch(context.getSource().getPlayer(), PdopnMode.PERPETUAL_NIGHT);
+        ServerPlayerEntity player = requirePlayer(context.getSource());
+        if (player == null) return 0;
+        executeSwitch(player, PdopnMode.PERPETUAL_NIGHT);
         return 1;
     }
 
@@ -109,7 +128,9 @@ public final class PdopnCommand {
             source.sendFeedback(() -> Text.translatable("pdopn.feedback.already_normal"), false);
             return 1;
         }
-        executeSwitch(source.getPlayer(), PdopnMode.NORMAL);
+        ServerPlayerEntity player = requirePlayer(source);
+        if (player == null) return 0;
+        executeSwitch(player, PdopnMode.NORMAL);
         return 1;
     }
 
@@ -137,9 +158,9 @@ public final class PdopnCommand {
 
     private static int showTemp(CommandContext<ServerCommandSource> context) {
         ServerCommandSource source = context.getSource();
-        ServerPlayerEntity player = source.getPlayer();
+        ServerPlayerEntity player = requirePlayer(source);
 
-        if (temperatureManager == null) return 1;
+        if (player == null || temperatureManager == null) return 0;
 
         double bodyTemp = temperatureManager.getBodyTemp(player.getUuid());
         String sign = bodyTemp >= 0 ? "+" : "";
@@ -169,7 +190,8 @@ public final class PdopnCommand {
 
     private static int setTemp(CommandContext<ServerCommandSource> context) {
         float value = FloatArgumentType.getFloat(context, "value");
-        ServerPlayerEntity player = context.getSource().getPlayer();
+        ServerPlayerEntity player = requirePlayer(context.getSource());
+        if (player == null) return 0;
 
         if (temperatureManager != null) {
             temperatureManager.setBodyTemp(player.getUuid(), value);
@@ -185,8 +207,8 @@ public final class PdopnCommand {
     }
 
     private static int toggleHud(CommandContext<ServerCommandSource> context) {
-        ServerPlayerEntity player = context.getSource().getPlayer();
-        if (temperatureManager == null) return 1;
+        ServerPlayerEntity player = requirePlayer(context.getSource());
+        if (player == null || temperatureManager == null) return 0;
 
         boolean newState = temperatureManager.toggleHud(player.getUuid());
         String key = newState ? "pdopn.temp.hud_on" : "pdopn.temp.hud_off";
@@ -211,9 +233,9 @@ public final class PdopnCommand {
 
     private static int showThirst(CommandContext<ServerCommandSource> context) {
         ServerCommandSource source = context.getSource();
-        ServerPlayerEntity player = source.getPlayer();
+        ServerPlayerEntity player = requirePlayer(source);
 
-        if (thirstManager == null) return 1;
+        if (player == null || thirstManager == null) return 0;
 
         double hydration = thirstManager.getHydration(player.getUuid());
         String valueStr = String.format("%.1f", hydration);
@@ -230,7 +252,8 @@ public final class PdopnCommand {
 
     private static int setThirst(CommandContext<ServerCommandSource> context) {
         float value = FloatArgumentType.getFloat(context, "value");
-        ServerPlayerEntity player = context.getSource().getPlayer();
+        ServerPlayerEntity player = requirePlayer(context.getSource());
+        if (player == null) return 0;
 
         if (thirstManager != null) {
             thirstManager.setHydration(player.getUuid(), value);
@@ -245,10 +268,12 @@ public final class PdopnCommand {
     }
 
     private static int getHydrationColor(double hydration) {
-        if (hydration >= 60.0) return 0x55FFFF;
-        if (hydration >= 40.0) return 0xFFAA00;
-        if (hydration >= 25.0) return 0xFF6600;
-        if (hydration >= 10.0) return 0xFF3300;
+        // 读取配置阈值，避免与 PdopnHudRenderer 出现两套硬编码数值
+        var cfg = yifei.pdopn.config.PdopnConfig.getInstance().thirst;
+        if (hydration >= cfg.comfortZoneLow) return 0x55FFFF;
+        if (hydration >= cfg.lightThirstLow) return 0xFFAA00;
+        if (hydration >= cfg.mediumDehydrationLow) return 0xFF6600;
+        if (hydration >= cfg.heavyDehydrationLow) return 0xFF3300;
         return 0xFF0000;
     }
 
