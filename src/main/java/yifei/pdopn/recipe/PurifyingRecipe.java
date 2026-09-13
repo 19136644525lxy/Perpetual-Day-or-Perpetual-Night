@@ -14,16 +14,17 @@ import yifei.pdopn.thirst.ThirstData;
 /**
  * 净水烧炼配方的公共实现（熔炉 / 高炉 / 烟熏炉）。
  *
- * <p>与直接使用原版 {@code minecraft:smelting} 的区别：
- * <ol>
- *   <li>输入在反序列化阶段被强制校验，<b>只允许水瓶或水桶</b>，否则拒绝加载；
- *   <li>运行时匹配额外校验物品类型，杜绝任意药水被误烧成净水瓶。
- * </ol>
+ * <p><b>为什么 getType() 必须返回原版配方类型：</b>
+ * 炉子按「配方类型」建立索引后查询 ——
+ * {@code AbstractFurnaceBlockEntity} 用 {@code RecipeType.SMELTING / BLASTING / SMOKING}
+ * 创建匹配器，而 {@code RecipeManager#getAllOfType} 是
+ * {@code recipes.getOrDefault(type, emptyMap())}，即按 {@code recipe.getType()} 分桶。
+ * 因此若把配方注册成自定义 RecipeType，它会被放进一个永远不会被查询的桶里，
+ * 表现为「配方存在但炉子不认」。本类改为报告设备对应的原版类型。
  *
- * <p>存在的原因：1.20.1 的 {@link Ingredient} 只支持 {@code item}/{@code tag} 两种
- * JSON 写法，其 {@code test()} 最终只比较物品类型（{@code isOf}），<b>不比较 NBT</b>。
- * 因此纯数据包无法区分「水瓶」与「治疗药水」——旧实现会让任意药水都被烧成净水瓶，
- * 造成贵重药水被误烧。本类通过显式白名单填补这一缺口。
+ * <p><b>输入校验放在哪里：</b>真正的保护在 {@link PdopnRecipes.Serializer} ——
+ * 它在反序列化阶段就拒绝任何非「水瓶 / 水桶」的输入。
+ * 因此不需要自定义 RecipeType 也能阻止任意药水被误烧。
  */
 public abstract class PurifyingRecipe extends AbstractCookingRecipe {
 
@@ -42,9 +43,16 @@ public abstract class PurifyingRecipe extends AbstractCookingRecipe {
 
     /** 熔炉净化配方 */
     public static class Smelting extends PurifyingRecipe {
+        /**
+         * 本变体绑定的配方类型。
+         * 单独暴露为常量，使「配方类型必须与设备一致」这一约束可以被单元测试断言，
+         * 同时构造器与测试读取的是同一个值，不会各自漂移。
+         */
+        public static final RecipeType<?> BOUND_TYPE = RecipeType.SMELTING;
+
         public Smelting(Identifier id, String group, CookingRecipeCategory category,
                         Ingredient input, ItemStack output, float experience, int cookTime) {
-            super(PdopnRecipes.PURIFYING_SMELTING, id, group, category, input, output, experience, cookTime);
+            super(BOUND_TYPE, id, group, category, input, output, experience, cookTime);
         }
 
         @Override
@@ -55,9 +63,12 @@ public abstract class PurifyingRecipe extends AbstractCookingRecipe {
 
     /** 高炉净化配方 */
     public static class Blasting extends PurifyingRecipe {
+        /** @see Smelting#BOUND_TYPE */
+        public static final RecipeType<?> BOUND_TYPE = RecipeType.BLASTING;
+
         public Blasting(Identifier id, String group, CookingRecipeCategory category,
                         Ingredient input, ItemStack output, float experience, int cookTime) {
-            super(PdopnRecipes.PURIFYING_BLASTING, id, group, category, input, output, experience, cookTime);
+            super(BOUND_TYPE, id, group, category, input, output, experience, cookTime);
         }
 
         @Override
@@ -68,9 +79,12 @@ public abstract class PurifyingRecipe extends AbstractCookingRecipe {
 
     /** 烟熏炉净化配方 */
     public static class Smoking extends PurifyingRecipe {
+        /** @see Smelting#BOUND_TYPE */
+        public static final RecipeType<?> BOUND_TYPE = RecipeType.SMOKING;
+
         public Smoking(Identifier id, String group, CookingRecipeCategory category,
                        Ingredient input, ItemStack output, float experience, int cookTime) {
-            super(PdopnRecipes.PURIFYING_SMOKING, id, group, category, input, output, experience, cookTime);
+            super(BOUND_TYPE, id, group, category, input, output, experience, cookTime);
         }
 
         @Override
