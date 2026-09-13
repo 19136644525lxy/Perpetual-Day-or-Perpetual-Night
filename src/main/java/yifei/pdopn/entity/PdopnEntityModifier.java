@@ -197,44 +197,34 @@ public final class PdopnEntityModifier {
         EntityAttributeInstance healthAttr = entity.getAttributeInstance(EntityAttributes.GENERIC_MAX_HEALTH);
         if (healthAttr == null) return;
 
-        double originalMaxHp = entity.getMaxHealth();
-        double targetHp;
         UUID speedUuid;
         double speedMultiplier;
         UUID attackUuid;
         double attackMultiplier;
 
         if (mode == PdopnMode.PERPETUAL_DAY) {
-            targetHp = 200.0;
             speedUuid = PD_SPEED_UUID;
-            // MULTIPLY_BASE 0.5 → 最终值 = base × (1 + 0.5) = base × 1.5
-            speedMultiplier = 0.5;
+            speedMultiplier = 0.5;     // × 1.5
             attackUuid = PD_ATTACK_UUID;
-            // MULTIPLY_BASE -0.5 → 最终值 = base × (1 + (-0.5)) = base × 0.5
-            attackMultiplier = -0.5;
+            attackMultiplier = 0.5;    // × 1.5（增强，与功能描述一致）
         } else {
-            targetHp = 1000.0;
             speedUuid = PN_SPEED_UUID;
-            // MULTIPLY_BASE -0.3 → 最终值 = base × 0.7
-            speedMultiplier = -0.3;
+            speedMultiplier = -0.3;    // × 0.7
             attackUuid = PN_ATTACK_UUID;
-            // MULTIPLY_BASE 4.0 → 最终值 = base × 5.0
-            attackMultiplier = 4.0;
+            attackMultiplier = 4.0;    // × 5.0
         }
 
-        // 设置血量（setBaseValue 不受钳制，computeValue 时才钳制到 1024）
-        healthAttr.setBaseValue(targetHp);
-        scaleHealth(entity, originalMaxHp);
+        // 血量按倍率缩放（旧实现写死绝对值 200/1000，
+        // 对 100 血的监守者等反而是削弱；30 血的劫掠兽又拿不到 10 倍）
+        applyHealthMultiplier(entity, healthAttr, mode, true);
 
         // 移速修正
-        addModifierIfPresent(entity, EntityAttributes.GENERIC_MOVEMENT_SPEED,
-            new EntityAttributeModifier(speedUuid, "pdopn_speed", speedMultiplier,
-                EntityAttributeModifier.Operation.MULTIPLY_BASE));
+        addMultiplier(entity, EntityAttributes.GENERIC_MOVEMENT_SPEED,
+            speedUuid, "pdopn_speed", speedMultiplier);
 
         // 攻击修正
-        addModifierIfPresent(entity, EntityAttributes.GENERIC_ATTACK_DAMAGE,
-            new EntityAttributeModifier(attackUuid, "pdopn_attack", attackMultiplier,
-                EntityAttributeModifier.Operation.MULTIPLY_BASE));
+        addMultiplier(entity, EntityAttributes.GENERIC_ATTACK_DAMAGE,
+            attackUuid, "pdopn_attack", attackMultiplier);
     }
 
     /** Boss 生物属性修改 */
@@ -242,44 +232,54 @@ public final class PdopnEntityModifier {
         EntityAttributeInstance healthAttr = entity.getAttributeInstance(EntityAttributes.GENERIC_MAX_HEALTH);
         if (healthAttr == null) return;
 
-        double originalMaxHp = entity.getMaxHealth();
-        double hpMultiplier;
-        double attackMultiplier;
         UUID speedUuid;
         double speedMultiplier;
         UUID attackUuid;
+        double attackMultiplier;
 
         if (mode == PdopnMode.PERPETUAL_DAY) {
-            hpMultiplier = 2.5;
             attackMultiplier = -0.3;   // × 0.7
             speedUuid = PD_SPEED_UUID;
             speedMultiplier = 0.5;     // × 1.5
             attackUuid = PD_ATTACK_UUID;
         } else {
-            hpMultiplier = 10.0;
             attackMultiplier = 2.0;    // × 3.0
             speedUuid = PN_SPEED_UUID;
             speedMultiplier = -0.3;    // × 0.7
             attackUuid = PN_ATTACK_UUID;
         }
 
-        // 设置血量（结果会被 ClampedEntityAttribute 钳制到 ≤1024）
-        double targetHp = originalMaxHp * hpMultiplier;
-        healthAttr.setBaseValue(targetHp);
-        scaleHealth(entity, originalMaxHp);
+        // 血量按倍率缩放（结果会被 ClampedEntityAttribute 钳制到 ≤1024）
+        applyHealthMultiplier(entity, healthAttr, mode, false);
 
         // 移速修正（同时处理地面移速和飞行移速）
-        addModifierIfPresent(entity, EntityAttributes.GENERIC_MOVEMENT_SPEED,
-            new EntityAttributeModifier(speedUuid, "pdopn_speed", speedMultiplier,
-                EntityAttributeModifier.Operation.MULTIPLY_BASE));
-        addModifierIfPresent(entity, EntityAttributes.GENERIC_FLYING_SPEED,
-            new EntityAttributeModifier(speedUuid, "pdopn_fly_speed", speedMultiplier,
-                EntityAttributeModifier.Operation.MULTIPLY_BASE));
+        addMultiplier(entity, EntityAttributes.GENERIC_MOVEMENT_SPEED,
+            speedUuid, "pdopn_speed", speedMultiplier);
+        addMultiplier(entity, EntityAttributes.GENERIC_FLYING_SPEED,
+            speedUuid, "pdopn_fly_speed", speedMultiplier);
 
         // 攻击修正
-        addModifierIfPresent(entity, EntityAttributes.GENERIC_ATTACK_DAMAGE,
-            new EntityAttributeModifier(attackUuid, "pdopn_attack", attackMultiplier,
-                EntityAttributeModifier.Operation.MULTIPLY_BASE));
+        addMultiplier(entity, EntityAttributes.GENERIC_ATTACK_DAMAGE,
+            attackUuid, "pdopn_attack", attackMultiplier);
+    }
+
+    /**
+     * 按模式缩放最大生命值，并按原比例同步当前生命。
+     *
+     * @param regular true = 普通敌对生物（永昼 ×10 / 永夜 ×50），false = Boss（永昼 ×2.5 / 永夜 ×10）
+     */
+    private void applyHealthMultiplier(LivingEntity entity, EntityAttributeInstance healthAttr,
+                                       PdopnMode mode, boolean regular) {
+        double multiplier;
+        if (mode == PdopnMode.PERPETUAL_DAY) {
+            multiplier = regular ? 10.0 : 2.5;
+        } else {
+            multiplier = regular ? 50.0 : 10.0;
+        }
+
+        double originalMaxHp = entity.getMaxHealth();
+        healthAttr.setBaseValue(originalMaxHp * multiplier);
+        scaleHealth(entity, originalMaxHp);
     }
 
     /* ══════════ 属性还原 ══════════ */
@@ -361,6 +361,24 @@ public final class PdopnEntityModifier {
         if (instance != null) {
             instance.addTemporaryModifier(modifier);
         }
+    }
+
+    /**
+     * 施加「真乘法」倍率修正。
+     *
+     * <p>使用 {@code MULTIPLY_TOTAL}（最终值 ×= 1 + value）而非 {@code MULTIPLY_BASE}：
+     * {@code MULTIPLY_BASE} 的实际语义是 {@code base + base × value}，
+     * 只在「没有其他 ADDITION / MULTIPLY_BASE 修正」时才等价于简单倍率，
+     * 例如移动速度会被原版迅捷/缓慢等修正叠加，导致实际倍率偏离文档。
+     *
+     * @param multiplier 相对倍率，1.5 表示 ×1.5，0.7 表示 ×0.7
+     */
+    private void addMultiplier(LivingEntity entity,
+                               net.minecraft.entity.attribute.EntityAttribute attribute,
+                               UUID uuid, String name, double multiplier) {
+        addModifierIfPresent(entity, attribute,
+            new EntityAttributeModifier(uuid, name, multiplier - 1.0,
+                EntityAttributeModifier.Operation.MULTIPLY_TOTAL));
     }
 
     /** 移除指定属性上的指定 UUID 修正 */

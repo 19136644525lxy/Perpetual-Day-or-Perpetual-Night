@@ -1,5 +1,5 @@
 {
-  "type": "minecraft:smoking",
+  "type": "pdopn:purifying_smoking",
   "category": "misc",
   "ingredient": {
     "item": "minecraft:potion"

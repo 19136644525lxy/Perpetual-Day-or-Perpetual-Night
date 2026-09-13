@@ -133,6 +133,11 @@ All commands require OP permission (default level 2).
 | Water Bottle (dirty) | Furnace / Blast Furnace / Smoker | Pure Water Bottle | 200 / 100 / 100 ticks |
 | Water Bucket (dirty) | Furnace / Blast Furnace / Smoker | Pure Water Bucket | 200 / 100 / 100 ticks |
 
+> These recipes use custom recipe types (`pdopn:purifying_*`) whose input is **strictly validated to a water bottle or water bucket**.
+> Because vanilla `Ingredient` JSON cannot express NBT conditions, earlier versions let *any* potion
+> (Healing / Strength / Fire Resistance, etc.) be smelted into a Pure Water Bottle, destroying valuable potions.
+> This is now prevented at the recipe level.
+
 ### Drinking Cooldown
 
 Direct drinking (empty-handed right-click on water) has a 40-tick (2 seconds) cooldown to prevent rapid spamming.
@@ -145,16 +150,21 @@ Direct drinking (empty-handed right-click on water) has a 40-tick (2 seconds) co
 
 | Entity Type | Health | Speed | Attack |
 |---|---|---|---|
-| Regular hostile | 200 | ×1.5 | ×0.5 |
+| Regular hostile | ×10 | ×1.5 | ×1.5 |
 | Boss (Ender Dragon / Wither) | ×2.5 | ×1.5 | ×0.7 |
 | Undead | Not processed (burns in sunlight) | — | — |
+
+> Health is scaled by a multiplier relative to the base value (vanilla 20-HP zombie → 200). Older versions used a fixed 200, which actually weakened high-HP mobs such as the Warden; it is now a true multiplier.
+> Attribute modifiers use `MULTIPLY_TOTAL`, so ratios such as ×1.5 / ×0.7 hold exactly for any entity.
 
 ### Perpetual Night Mode
 
 | Entity Type | Health | Speed | Attack |
 |---|---|---|---|
-| Regular hostile | 1000 | ×0.7 | ×5.0 |
+| Regular hostile | ×50 | ×0.7 | ×5.0 |
 | Boss (Ender Dragon / Wither) | ×10 | ×0.7 | ×3.0 |
+
+> Health is clamped at 1024, so some entities cannot reach the nominal value at high multipliers.
 
 Neutral hostile mobs (Enderman, Spider, Zombie Piglin, etc.) actively track players in Perpetual Day / Night modes (via injected `ActiveTargetGoal`).
 

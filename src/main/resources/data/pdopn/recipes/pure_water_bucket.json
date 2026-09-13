@@ -1,5 +1,5 @@
 {
-  "type": "minecraft:smelting",
+  "type": "pdopn:purifying_smelting",
   "category": "misc",
   "ingredient": {
     "item": "minecraft:water_bucket"

@@ -32,6 +32,7 @@ import yifei.pdopn.hud.PdopnHudRenderer;
 import yifei.pdopn.mode.PdopnMode;
 import yifei.pdopn.items.PdopnItems;
 import yifei.pdopn.callback.PdopnPlayerDeathCallback;
+import yifei.pdopn.recipe.PdopnRecipes;
 import yifei.pdopn.temperature.PdopnTemperatureManager;
 import yifei.pdopn.thirst.PdopnThirstManager;
 
@@ -70,6 +71,9 @@ public class PerpetualDayOrPerpetualNight implements ModInitializer, PdopnComman
 
         // 注册自定义物品（净水瓶、净水桶）
         PdopnItems.register();
+
+        // 注册净水烧炼配方类型（只接受水瓶，防止贵重药水被误烧）
+        PdopnRecipes.register();
 
         // 注入模式变更监听器，实现指令层与模式管理层的解耦 (DIP)
         PdopnCommand.setModeChangeListener(this);
