@@ -32,7 +32,6 @@ import yifei.pdopn.hud.PdopnHudRenderer;
 import yifei.pdopn.mode.PdopnMode;
 import yifei.pdopn.items.PdopnItems;
 import yifei.pdopn.callback.PdopnPlayerDeathCallback;
-import yifei.pdopn.recipe.PdopnRecipes;
 import yifei.pdopn.rules.PdopnGameRules;
 import yifei.pdopn.rules.PdopnSettings;
 import yifei.pdopn.temperature.PdopnTemperatureManager;
@@ -79,9 +78,6 @@ public class PerpetualDayOrPerpetualNight implements ModInitializer, PdopnComman
 
         // 注册自定义物品（净水瓶、净水桶）
         PdopnItems.register();
-
-        // 注册净水烧炼配方类型（只接受水瓶，防止贵重药水被误烧）
-        PdopnRecipes.register();
 
         // 注册模组游戏规则（必须在此处触发类加载，静态字段负责实际注册）
         LOGGER.info("[PDoPN] 已注册 {} 条游戏规则", PdopnGameRules.ruleCount());

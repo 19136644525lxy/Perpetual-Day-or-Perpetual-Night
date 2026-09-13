@@ -61,35 +61,13 @@ public final class ThirstData {
 
     /**
      * 判断物品是否为「普通水瓶」（NBT 为 water）。
+     * 用于区分含水水瓶与其他药水（只有水瓶是需要净化、且不能直接饮用的脏水）。
      */
     public static boolean isWaterBottle(net.minecraft.item.ItemStack stack) {
         return stack != null
             && !stack.isEmpty()
             && stack.getItem() == Items.POTION
             && PotionUtil.getPotion(stack) == Potions.WATER;
-    }
-
-    /** 普通水桶（可直接烧炼成净水桶）。 */
-    public static net.minecraft.item.ItemStack waterBucketStack() {
-        return new net.minecraft.item.ItemStack(Items.WATER_BUCKET);
-    }
-
-    /** 普通水瓶（NBT 为 water）。 */
-    public static net.minecraft.item.ItemStack waterBottleStack() {
-        net.minecraft.item.ItemStack stack = new net.minecraft.item.ItemStack(Items.POTION);
-        PotionUtil.setPotion(stack, Potions.WATER);
-        return stack;
-    }
-
-    /**
-     * 净水烧炼配方允许的输入白名单：水瓶 或 水桶。
-     *
-     * <p>用于在配方反序列化时拒绝其他物品（尤其是各类药水），
-     * 因为 {@code Ingredient} 的 JSON 无法表达 NBT 条件。
-     */
-    public static boolean isAllowedPurifyingInput(net.minecraft.item.ItemStack stack) {
-        if (stack == null || stack.isEmpty()) return false;
-        return isWaterBottle(stack) || stack.getItem() == Items.WATER_BUCKET;
     }
 
     /* ══════════ 含水食物恢复量 ══════════ */

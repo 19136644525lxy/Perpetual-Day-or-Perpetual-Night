@@ -169,16 +169,19 @@ so the death message is mod-specific rather than the generic vanilla text:
 | Water Bottle (dirty) | Furnace / Blast Furnace / Smoker | Pure Water Bottle | 200 / 100 / 100 ticks |
 | Water Bucket (dirty) | Furnace / Blast Furnace / Smoker | Pure Water Bucket | 200 / 100 / 100 ticks |
 
-> These recipes use a custom serializer (`pdopn:purifying`) whose input is **strictly validated to a water bottle or water bucket** at load time.
-> Because vanilla `Ingredient` JSON cannot express NBT conditions, earlier versions let *any* potion
-> (Healing / Strength / Fire Resistance, etc.) be smelted into a Pure Water Bottle, destroying valuable potions.
-> This is now prevented at the recipe level.
+> These recipes use **vanilla recipe types** (`minecraft:smelting` / `blasting` / `smoking`)
+> with a vanilla water bottle or water bucket as input.
 >
-> Note: the recipes report the **vanilla `RecipeType`** (`smelting` / `blasting` / `smoking`).
-> Blocks index recipes by type and look them up via `RecipeManager#getAllOfType`
-> (`recipes.getOrDefault(type, ...)`), so a recipe reporting a custom type lands in a bucket
-> that is never queried — appearing as "the recipe exists but the furnace ignores it".
-> No custom RecipeType is needed; the protection comes from the serializer.
+> ⚠️ **Known limitation**: vanilla `Ingredient` JSON only supports `item` / `tag`, and its matching
+> logic (`isItemEqual` → `isOf(Item)`) does **not** compare NBT, so it cannot match "a water bottle" specifically.
+> As a result, **any potion** (Healing / Strength / Fire Resistance, etc.) smelted in a furnace
+> will turn into a Pure Water Bottle. Do not put valuable potions in a furnace.
+>
+> History: a custom `RecipeSerializer` + custom `RecipeType` was attempted to filter the input, but blocks
+> index recipes by type and look them up via `RecipeManager#getAllOfType`
+> (`recipes.getOrDefault(type, ...)`), so a custom type makes the recipe land in a bucket that is never queried —
+> appearing as "the recipe exists but the furnace ignores it". To keep the recipes working,
+> they were reverted to vanilla recipe types.
 
 ### Drinking Cooldown
 

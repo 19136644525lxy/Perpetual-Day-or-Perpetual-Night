@@ -167,14 +167,18 @@ Jump to the English introduction: [README_en.md](https://github.com/19136644525l
 | 水瓶（脏水） | 熔炉 / 高炉 / 烟熏炉 | 净水瓶 | 200 / 100 / 100 tick |
 | 水桶（脏水） | 熔炉 / 高炉 / 烟熏炉 | 净水桶 | 200 / 100 / 100 tick |
 
-> 配方使用自定义序列化器（`pdopn:purifying`），输入在加载阶段被**强制校验为水瓶或水桶**。
-> 由于原版 `Ingredient` 的 JSON 无法表达 NBT 条件，早期版本会让任意药水（治疗 / 力量 / 抗火等）
-> 都被烧成净水瓶，造成贵重药水误烧；现已从机制上杜绝。
+> 配方使用**原版配方类型**（`minecraft:smelting` / `blasting` / `smoking`），
+> 输入为原版水瓶或水桶。
 >
-> 注意：配方**报告原版 `RecipeType`**（`smelting` / `blasting` / `smoking`）。
-> 炉子按配方类型建立索引并查询（`RecipeManager#getAllOfType` 即
-> `recipes.getOrDefault(type, ...)`），若配方报告自定义类型，它会落入永远不会被查询的桶中，
-> 表现为「配方存在但炉子不认」。因此不需自定义 RecipeType，保护来自序列化器。
+> ⚠️ **已知限制**：原版 `Ingredient` 的 JSON 只支持 `item` / `tag`，其匹配逻辑
+> （`isItemEqual` → `isOf(Item)`）**不比较 NBT**，因此无法只匹配「水瓶」。
+> 结果是**任意药水**（治疗 / 力量 / 抗火等）放进熔炉都会被烧成净水瓶。
+> 请勿把贵重药水放进熔炉。
+>
+> 历史说明：曾尝试用自定义 `RecipeSerializer` + 自定义 `RecipeType` 来过滤输入，
+> 但炉子按配方类型建立索引并查询（`RecipeManager#getAllOfType` 即
+> `recipes.getOrDefault(type, ...)`），自定义类型会导致配方落入永远不会被查询的桶中，
+> 表现为「配方存在但炉子不认」。为保证配方可用，已回退为原版配方类型。
 
 ### 饮水冷却
 

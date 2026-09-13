@@ -1,5 +1,5 @@
 {
-  "type": "pdopn:purifying_blasting",
+  "type": "minecraft:blasting",
   "category": "misc",
   "ingredient": {
     "item": "minecraft:water_bucket"
