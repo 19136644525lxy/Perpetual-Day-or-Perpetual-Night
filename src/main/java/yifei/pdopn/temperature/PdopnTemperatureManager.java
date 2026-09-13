@@ -40,6 +40,31 @@ public final class PdopnTemperatureManager {
     /** 最近一次环境温度缓存：UUID → 环境温度（含漂移），供 HUD 渲染器读取 */
     private final Map<UUID, Double> lastEnvTemps = new ConcurrentHashMap<>();
 
+    /**
+     * 纯环境温度缓存：UUID → (计算结果, 上次计算 tick, 上次计算所在方块)。
+     * 维度 / 群系 / 时间 / 天气 / 海拔变化极慢，无需逐 tick 重算。
+     */
+    private final Map<UUID, EnvCache> envTempCache = new ConcurrentHashMap<>();
+
+    /**
+     * 附近方块温度影响缓存：UUID → (计算结果, 上次计算 tick)。
+     * 该项每 tick 要扫描 5×5×5 = 125 个方块，是整个温度系统最重的开销。
+     * 玩家静止时几乎不变，因此按 {@link #BLOCK_SCAN_INTERVAL} 节流。
+     */
+    private final Map<UUID, BlockCache> blockTempCache = new ConcurrentHashMap<>();
+
+    /** 方块扫描节流间隔（tick）；20 tick = 1 秒 */
+    private static final int BLOCK_SCAN_INTERVAL = 20;
+
+    /** 纯环境温度重算间隔（tick），玩家移动到新方块时会立即失效 */
+    private static final int ENV_RECALC_INTERVAL = 20;
+
+    /** 纯环境温度缓存条目 */
+    private record EnvCache(double value, int computedAtTick, BlockPos pos) {}
+
+    /** 方块温度影响缓存条目 */
+    private record BlockCache(double value, int computedAtTick) {}
+
     /** HUD 显示开关：默认开启 */
     private final Set<UUID> hudEnabled = Collections.synchronizedSet(new HashSet<>());
 
@@ -121,6 +146,9 @@ public final class PdopnTemperatureManager {
         savePlayerData(playerId);
         bodyTemps.remove(playerId);
         lastEnvTemps.remove(playerId);
+        envTempCache.remove(playerId);
+        blockTempCache.remove(playerId);
+        // 注意：hudEnabled 故意不清理，否则玩家关闭 HUD 后重新登录会被重置为开启
     }
 
     /** 玩家死亡时重置体温为默认值（偏移值保持全局累计，不重置） */
@@ -199,8 +227,9 @@ public final class PdopnTemperatureManager {
                     continue;
                 }
 
-                // 计算环境温度（含偏移）
-                double envTemp = calcEnvironmentTemp(player, currentMode);
+                // 计算环境温度（含偏移）——带缓存节流，见 envCacheFor
+                double envTemp = envCacheFor(player, currentMode);
+                double blockTemp = blockTempCacheFor(player);
 
                 // 装备隔热系数
                 double insulation = calcInsulation(player);
@@ -244,29 +273,86 @@ public final class PdopnTemperatureManager {
         }
     }
 
+    /* ══════════ 环境温度缓存（性能节流） ══════════
+     * 环境温度原来每个玩家每 tick 全量重算一次，其中最重的是 125 次
+     * world.getBlockState 扫描。这些量的实际变化频率远低于 tick 频率，
+     * 因此拆成两部分分别缓存：
+     *   - 纯环境温度：每 20 tick 重算，或玩家离开当前方块时立即重算
+     *   - 附近方块影响：每 20 tick 重算
+     * 玩家站在岩浆旁等场景最迟 1 秒（20 tick）内生效，
+     * 而 bodyTemp 每 tick 仍照常用缓存值趋向，体感无差别。
+     */
+
+    /**
+     * 获取（可能来自缓存的）纯环境温度。
+     * 无缓存、玩家换了方块、或距上次计算超过 {@link #ENV_RECALC_INTERVAL} tick 时重算。
+     */
+    private double envCacheFor(ServerPlayerEntity player, PdopnMode mode) {
+        UUID id = player.getUuid();
+        ServerWorld world = (ServerWorld) player.getWorld();
+        BlockPos pos = player.getBlockPos();
+
+        EnvCache cached = envTempCache.get(id);
+        boolean movedToNewBlock = cached == null || !pos.equals(cached.pos());
+        boolean stale = cached == null || (tickCount - cached.computedAtTick()) >= ENV_RECALC_INTERVAL;
+
+        double pure;
+        if (movedToNewBlock || stale) {
+            pure = calcPureEnvTemp(world, pos);
+            envTempCache.put(id, new EnvCache(pure, tickCount, pos.toImmutable()));
+        } else {
+            pure = cached.value();
+        }
+
+        return combineEnvTemp(pure, blockTempCacheFor(player), mode);
+    }
+
+    /**
+     * 获取（可能来自缓存的）附近方块温度影响。
+     * 这是温度系统唯一的重量级计算（125 次方块状态读取）。
+     */
+    private double blockTempCacheFor(ServerPlayerEntity player) {
+        UUID id = player.getUuid();
+        BlockCache cached = blockTempCache.get(id);
+        if (cached != null && (tickCount - cached.computedAtTick()) < BLOCK_SCAN_INTERVAL) {
+            return cached.value();
+        }
+        double value = calcNearbyBlockEffect((ServerWorld) player.getWorld(), player.getBlockPos());
+        blockTempCache.put(id, new BlockCache(value, tickCount));
+        return value;
+    }
+
     /* ══════════ 环境温度计算 ══════════ */
 
     /**
      * 计算玩家所在位置的完整环境温度（含偏移）。
      * 正常模式：纯环境温度 clamp 到 ±normalSafeRange，方块影响不 clamp
      * 永昼/永夜：环境温度 + 累计偏移，无 clamp
+     *
+     * <p>注意：本方法每次调用都会做完整计算（含 5×5×5 方块扫描）。
+     * 逐 tick 的调用方应改用 {@link #envCacheFor} + {@link #blockTempCacheFor}。
      */
     public double calcEnvironmentTemp(ServerPlayerEntity player, PdopnMode mode) {
         ServerWorld world = (ServerWorld) player.getWorld();
         BlockPos pos = player.getBlockPos();
+        return combineEnvTemp(calcPureEnvTemp(world, pos), calcNearbyBlockEffect(world, pos), mode);
+    }
+
+    /**
+     * 计算「纯环境温度」：维度 / 群系 / 时间 / 天气 / 海拔，不含累积偏移与附近方块。
+     */
+    private double calcPureEnvTemp(ServerWorld world, BlockPos pos) {
         PdopnConfig.TemperatureConfig tcfg = PdopnConfig.getInstance().temperature;
 
-        // 1. 维度基础温度
-        double dimTemp = getDimensionTemp(player);
+        // 1. 维度基础温度（非零表示下界 / 末地，覆盖群系温度）
+        double dimTemp = getDimensionTemp(world);
 
         // 2. 群系基础温度
-        Biome biome = world.getBiome(pos).value();
         RegistryKey<Biome> biomeKey = world.getBiome(pos).getKey().orElse(null);
         double biomeTemp = (biomeKey != null)
-            ? TemperatureData.getBiomeTemp(biomeKey, biome)
-            : -20.0 + biome.getTemperature() * 35.0;
+            ? TemperatureData.getBiomeTemp(biomeKey, world.getBiome(pos).value())
+            : -20.0 + world.getBiome(pos).value().getTemperature() * 35.0;
 
-        // 下界/末地维度使用维度温度替代群系温度
         double baseTemp = (dimTemp != 0.0) ? dimTemp : biomeTemp;
 
         // 3. 时间修正
@@ -275,39 +361,31 @@ public final class PdopnTemperatureManager {
         // 4. 天气修正（读取配置，旧实现绕过了配置导致 rainModifier/thunderModifier 改了不起作用）
         double weatherMod = 0.0;
         if (world.isRaining()) {
-            weatherMod = world.isThundering()
-                ? tcfg.thunderModifier
-                : tcfg.rainModifier;
+            weatherMod = world.isThundering() ? tcfg.thunderModifier : tcfg.rainModifier;
         }
 
         // 5. 海拔修正
         double altMod = TemperatureData.getAltitudeModifier(pos.getY());
 
-        // 6. 附近方块修正（不参与安全 clamp，可导致致死）
-        double blockMod = calcNearbyBlockEffect(world, pos);
+        // 6. 室外检测（头顶无方块遮挡时时间/天气影响全效，室内减弱至 30%）
+        double exposureFactor = world.isSkyVisible(pos.up()) ? 1.0 : 0.3;
 
-        // 7. 室外检测（头顶无方块遮挡时时间/天气影响全效，室内减弱）
-        boolean outdoors = world.isSkyVisible(pos.up());
-        double exposureFactor = outdoors ? 1.0 : 0.3;
+        return baseTemp + (timeMod + weatherMod) * exposureFactor + altMod;
+    }
 
-        // 纯环境温度（不含方块影响）
-        double pureEnvTemp = baseTemp + (timeMod + weatherMod) * exposureFactor + altMod;
-
+    /** 按模式把纯环境温度、累积偏移与方块影响合成为最终环境温度 */
+    private double combineEnvTemp(double pureEnvTemp, double blockMod, PdopnMode mode) {
         if (mode == PdopnMode.NORMAL) {
-            // 正常模式：纯环境温度 clamp 到安全范围，不会致死
-            double safe = tcfg.normalSafeRange;
-            pureEnvTemp = Math.max(-safe, Math.min(safe, pureEnvTemp));
-            // 方块影响叠加（不 clamp）
-            return pureEnvTemp + blockMod;
-        } else {
-            // 永昼/永夜：环境温度 + 累计偏移 + 方块影响，无 clamp
-            return pureEnvTemp + accumulatedDrift + blockMod;
+            // 正常模式：纯环境温度 clamp 到安全范围（方块影响不 clamp，仍可致死）
+            double safe = PdopnConfig.getInstance().temperature.normalSafeRange;
+            return Math.max(-safe, Math.min(safe, pureEnvTemp)) + blockMod;
         }
+        // 永昼/永夜：环境温度 + 累计偏移 + 方块影响，无 clamp
+        return pureEnvTemp + accumulatedDrift + blockMod;
     }
 
     /** 获取维度基础温度（下界/末地为非零值） */
-    private double getDimensionTemp(ServerPlayerEntity player) {
-        ServerWorld world = (ServerWorld) player.getWorld();
+    private double getDimensionTemp(ServerWorld world) {
         PdopnConfig.TemperatureConfig tcfg = PdopnConfig.getInstance().temperature;
         if (world.getRegistryKey() == World.NETHER) return tcfg.netherBaseTemp;
         if (world.getRegistryKey() == World.END) return tcfg.endBaseTemp;
@@ -553,5 +631,15 @@ public final class PdopnTemperatureManager {
     /** 获取当前累计偏移值（供指令/HUD 查询） */
     public double getAccumulatedDrift() {
         return accumulatedDrift;
+    }
+
+    /** 获取当前运行模式（供 HUD 显示） */
+    public PdopnMode getCurrentMode() {
+        return currentMode;
+    }
+
+    /** 永昼 / 永夜模式已持续的完整天数（供 HUD 显示；1 天 = 24000 tick） */
+    public long getPerpetualDays() {
+        return perpetualTicks / 24000L;
     }
 }

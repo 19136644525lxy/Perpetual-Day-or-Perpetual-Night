@@ -21,6 +21,13 @@
   "pdopn.temp.hud_on": "Temperature HUD enabled.",
   "pdopn.temp.hud_off": "Temperature HUD disabled.",
 
+  "pdopn.hud.env": "Env",
+  "pdopn.hud.drift": "Drift",
+  "pdopn.hud.days": "d",
+  "pdopn.hud.perpetual_day": "Perpetual Day",
+  "pdopn.hud.perpetual_night": "Perpetual Night",
+  "pdopn.hud.normal": "Normal",
+
   "key.pdopn.toggle_hud": "Toggle Temperature HUD",
   "category.pdopn": "Perpetual Day or Night",
 

@@ -17,9 +17,9 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.world.ServerWorld;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import yifei.pdopn.mixin.MobEntityTargetSelectorAccessor;
 import yifei.pdopn.mode.PdopnMode;
 
-import java.lang.reflect.Field;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
@@ -50,20 +50,6 @@ public final class PdopnEntityModifier {
 
     /** AI 目标注入优先级（高于大多数原生目标选择） */
     private static final int PLAYER_TARGET_PRIORITY = 0;
-
-    /** MobEntity.targetSelector 反射字段（protected，需反射访问） */
-    private static final Field TARGET_SELECTOR_FIELD;
-    static {
-        Field f;
-        try {
-            f = net.minecraft.entity.mob.MobEntity.class.getDeclaredField("targetSelector");
-            f.setAccessible(true);
-        } catch (NoSuchFieldException e) {
-            f = null;
-            LOGGER.error("无法反射获取 MobEntity.targetSelector");
-        }
-        TARGET_SELECTOR_FIELD = f;
-    }
 
     /** 已修改实体 → 原始属性快照 */
     private final Map<UUID, OriginalAttributes> modifiedEntities = new HashMap<>();
@@ -311,15 +297,13 @@ public final class PdopnEntityModifier {
 
     /* ══════════ AI 修改 ══════════ */
 
-    /** 通过反射获取实体的 targetSelector */
+    /**
+     * 获取实体的 targetSelector。
+     * 通过 {@link MobEntityTargetSelectorAccessor} 访问，不再使用反射。
+     */
     private net.minecraft.entity.ai.goal.GoalSelector getTargetSelector(LivingEntity entity) {
-        if (!(entity instanceof MobEntity) || TARGET_SELECTOR_FIELD == null) return null;
-        try {
-            return (net.minecraft.entity.ai.goal.GoalSelector) TARGET_SELECTOR_FIELD.get(entity);
-        } catch (IllegalAccessException e) {
-            LOGGER.error("反射访问 targetSelector 失败: {}", e.getMessage());
-            return null;
-        }
+        if (!(entity instanceof MobEntity)) return null;
+        return ((MobEntityTargetSelectorAccessor) entity).pdopn$getTargetSelector();
     }
 
     /** 注入高优先级玩家追踪目标，使中立敌对生物主动搜寻并攻击玩家 */

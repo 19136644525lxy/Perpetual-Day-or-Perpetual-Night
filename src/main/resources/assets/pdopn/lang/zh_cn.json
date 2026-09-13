@@ -21,6 +21,13 @@
   "pdopn.temp.hud_on": "温度 HUD 已开启。",
   "pdopn.temp.hud_off": "温度 HUD 已关闭。",
 
+  "pdopn.hud.env": "环境",
+  "pdopn.hud.drift": "偏移",
+  "pdopn.hud.days": "天",
+  "pdopn.hud.perpetual_day": "永昼",
+  "pdopn.hud.perpetual_night": "永夜",
+  "pdopn.hud.normal": "正常",
+
   "key.pdopn.toggle_hud": "切换温度 HUD",
   "category.pdopn": "永昼或永夜",
 

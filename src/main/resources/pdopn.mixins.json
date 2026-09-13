@@ -6,7 +6,8 @@
 			"PotionItemMixin",
 			"BucketItemMixin",
 			"PlayerEntityDeathMixin",
-			"ItemMixin"
+			"ItemMixin",
+			"MobEntityTargetSelectorAccessor"
 		],
 	"injectors": {
 		"defaultRequire": 1
