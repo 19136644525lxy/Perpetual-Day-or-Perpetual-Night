@@ -2,6 +2,9 @@ package yifei.pdopn.config;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import net.fabricmc.loader.api.FabricLoader;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -9,6 +12,9 @@ import org.slf4j.LoggerFactory;
 import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 
 /**
  * 全局配置管理器。
@@ -47,6 +53,14 @@ public class PdopnConfig {
      * （那时才确定模组已真正装载，避免在服务端之外触发文件写入）。
      */
     private static boolean needsRewrite = false;
+
+    /**
+     * 待回写的文件内容（文件原有值 + 补齐的默认项）。
+     *
+     * <p>回写必须写入「合并后的 JSON」而不是重新序列化配置对象：
+     * 后者会丢掉用户手写在文件里、但类中没有对应字段的键，也会丢掉原文件里的注释性内容。
+     */
+    private static JsonObject mergeFile = null;
 
     /* ══════════ 温度系统配置 ══════════ */
     public TemperatureConfig temperature = new TemperatureConfig();
@@ -168,20 +182,47 @@ public class PdopnConfig {
     }
 
     private static PdopnConfig load() {
-        Path configDir = FabricLoader.getInstance().getConfigDir().resolve("pdopn");
+        Path configDir;
+        try {
+            configDir = FabricLoader.getInstance().getConfigDir().resolve("pdopn");
+        } catch (Throwable t) {
+            // 配置目录都拿不到时不应让整个模组初始化失败，用默认值继续并在日志中留痕
+            LOGGER.error("[PDoPN] 无法获取配置目录，将使用默认配置（不会写入文件）: {}", t.toString());
+            return new PdopnConfig();
+        }
         Path configFile = configDir.resolve("pdopn.json");
 
         if (Files.exists(configFile)) {
             try (Reader reader = Files.newBufferedReader(configFile)) {
-                PdopnConfig config = GSON.fromJson(reader, PdopnConfig.class);
+                // 先保留文件原始 JSON：合并必须以「文件里实际写的内容」为基准，
+                // 否则用户显式写出的 null / 被 Gson 丢弃的未知键都会丢失
+                JsonObject fromFile = JsonParser.parseReader(reader).getAsJsonObject();
+                PdopnConfig config = GSON.fromJson(fromFile, PdopnConfig.class);
                 if (config != null) {
                     int loadedVersion = config.configVersion;
-                    boolean changed = normalize(config);
-                    LOGGER.info("[PDoPN] Config loaded from {} (version {} -> {})",
-                        configFile, loadedVersion, config.configVersion);
-                    // 旧版本文件（或字段被写成 null）需要回写，否则新字段永远不出现在文件里
-                    if (changed || loadedVersion < CURRENT_CONFIG_VERSION) {
-                        needsRewrite = true;
+                    normalize(config);
+
+                    // 以「文件实际内容」为基准，把默认值里缺失的键补进去。
+                    // 方向很重要：补齐结果写回 fromFile（即将写盘的对象），而不是写入 config 的序列化结果，
+                    // 否则用户已改过的值会被默认值覆盖。
+                    List<String> added = new ArrayList<>();
+                    JsonObject defaults = GSON.toJsonTree(config).getAsJsonObject();
+                    mergeDefaults(fromFile, defaults, "", added);
+
+                    // 版本号是模组管理的元数据，不由用户维护，必须显式提升。
+                    // 否则文件里原有的旧版本号会一直被保留，导致每次启动都判定为「需要回写」。
+                    if (loadedVersion != CURRENT_CONFIG_VERSION) {
+                        fromFile.addProperty("configVersion", CURRENT_CONFIG_VERSION);
+                        added.add("configVersion");
+                    }
+
+                    mergeFile = fromFile;
+                    needsRewrite = !added.isEmpty();
+
+                    LOGGER.info("[PDoPN] Config loaded from {} (version {} -> {}, 补充 {} 个缺失项)",
+                        configFile, loadedVersion, config.configVersion, added.size());
+                    if (!added.isEmpty()) {
+                        LOGGER.info("[PDoPN] 已补齐缺失配置项: {}", added);
                     }
                     return config;
                 }
@@ -191,9 +232,67 @@ public class PdopnConfig {
         }
 
         // 不存在或加载失败 → 创建默认配置
+        LOGGER.info("[PDoPN] 未找到配置文件，正在生成默认配置：{}", configFile);
         PdopnConfig config = new PdopnConfig();
         save(config);
         return config;
+    }
+
+    /**
+     * 把 {@code defaults} 中「{@code target} 里不存在」的键补进 {@code target}。
+     *
+     * <p>这是「升级时补齐新增配置项」的核心：新增字段会被写入文件，而用户已经改过的值
+     * 一律保留 —— 绝不用默认值覆盖既有值。
+     *
+     * <p>方向说明：{@code target} 是<b>即将写盘的文件内容</b>，{@code defaults} 是完整的
+     * 默认结构。补齐必须写进 target，否则新增键不会落盘。
+     *
+     * <p>嵌套对象会被递归处理；当 target 中某个分组的类型不是对象时（例如用户手误写成数字），
+     * 直接整体替换为默认结构。
+     *
+     * @param target   文件内容（就地修改）
+     * @param defaults 完整默认结构
+     * @param path     当前路径，仅用于日志展示
+     * @param added    收集被补齐的键路径
+     */
+    static void mergeDefaults(JsonObject target, JsonObject defaults, String path, List<String> added) {
+        for (Map.Entry<String, JsonElement> entry : new ArrayList<>(defaults.entrySet())) {
+            String key = entry.getKey();
+            String childPath = path.isEmpty() ? key : path + "." + key;
+            JsonElement defaultValue = entry.getValue();
+
+            if (!target.has(key) || target.get(key).isJsonNull()) {
+                // 文件里缺少该项（或为 null）→ 用默认值补齐
+                target.add(key, defaultValue.deepCopy());
+                // 缺失的是整个分组时，按叶子键逐个登记，日志才能直接告诉用户「新增了哪些配置项」
+                collectPaths(defaultValue, childPath, added);
+                continue;
+            }
+
+            JsonElement targetValue = target.get(key);
+            if (defaultValue.isJsonObject()) {
+                if (targetValue.isJsonObject()) {
+                    mergeDefaults(targetValue.getAsJsonObject(), defaultValue.getAsJsonObject(),
+                        childPath, added);
+                } else {
+                    // 类型不符 → 以默认结构替换
+                    target.add(key, defaultValue.deepCopy());
+                    collectPaths(defaultValue, childPath, added);
+                }
+            }
+            // 基本类型且文件里已存在 → 保留用户的值，不动
+        }
+    }
+
+    /** 递归收集某个 JSON 结构中的所有叶子键路径（仅用于日志展示）。 */
+    private static void collectPaths(JsonElement element, String path, List<String> out) {
+        if (element != null && element.isJsonObject()) {
+            for (Map.Entry<String, JsonElement> entry : element.getAsJsonObject().entrySet()) {
+                collectPaths(entry.getValue(), path + "." + entry.getKey(), out);
+            }
+        } else {
+            out.add(path);
+        }
     }
 
     /**
@@ -249,18 +348,33 @@ public class PdopnConfig {
      * 设为 public 以便主类在检测到旧版本文件时主动触发一次回写。
      */
     public static void save(PdopnConfig config) {
-        Path configDir = FabricLoader.getInstance().getConfigDir().resolve("pdopn");
+        Path configDir;
+        try {
+            configDir = FabricLoader.getInstance().getConfigDir().resolve("pdopn");
+        } catch (Throwable t) {
+            // 绝不让配置写入失败拖垮服务端 tick
+            LOGGER.error("[PDoPN] 无法获取配置目录，已跳过写入: {}", t.toString());
+            return;
+        }
         Path configFile = configDir.resolve("pdopn.json");
         try {
             Files.createDirectories(configDir);
             try (Writer writer = Files.newBufferedWriter(configFile)) {
-                GSON.toJson(config, writer);
+                // 优先写入「合并后的文件内容」：它保留了用户原有取值，
+                // 并补上了新增/缺失的键；直接序列化配置对象会丢掉文件中无对应字段的键
+                if (mergeFile != null) {
+                    GSON.toJson(mergeFile, writer);
+                } else {
+                    GSON.toJson(config, writer);
+                }
             }
             // 已回写则不重复标记
             needsRewrite = false;
+            mergeFile = null;
             LOGGER.info("[PDoPN] Config saved to {}", configFile);
-        } catch (IOException e) {
-            LOGGER.warn("[PDoPN] Failed to save config: {}", e.getMessage());
+        } catch (Exception e) {
+            // 捕获范围放宽到 Exception：权限不足、磁盘只读等都可能以非 IOException 形式出现
+            LOGGER.error("[PDoPN] 配置写入失败（路径 {}）: {}", configFile, e.toString());
         }
     }
 

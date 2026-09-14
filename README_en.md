@@ -308,7 +308,17 @@ All concrete temperature / thirst numbers live here.
 | `configVersion` | `3` | Config schema version, used for automatic migration |
 
 > Use `/pdopn reload` to apply config changes without restarting the server.
-> If `configVersion` in the file is older than the current one, the mod fills in new fields and writes the file back.
+
+If the config file is missing or corrupt, a complete default config is **regenerated automatically**.
+
+When the file is missing some entries (typically new fields added by a mod update), the mod **merges** them in:
+new entries are written with their default values, while **any value you changed is kept and never overwritten**.
+The added entries are printed to the log (`已补齐缺失配置项: [...]` / "missing config entries added"),
+so you can see exactly what an update introduced.
+
+> Implementation note: the merge compares against the **file's actual JSON content** key by key,
+> rather than re-serializing the config object — the latter would overwrite your values and drop
+> keys that have no matching class field. `configVersion` is mod-managed metadata and is upgraded automatically.
 
 ---
 

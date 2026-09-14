@@ -1,7 +1,12 @@
 package yifei.pdopn.config;
 
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+
+import java.util.ArrayList;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -95,5 +100,119 @@ class PdopnConfigTest {
         // 若将来新增字段却忘记递增，这里会失败，提醒更新版本号。
         assertTrue(PdopnConfig.CURRENT_CONFIG_VERSION >= 3,
             "新增配置字段后必须递增 CURRENT_CONFIG_VERSION");
+    }
+
+    /* ────────── 文件级合并（新增键补齐、既有值不覆盖） ────────── */
+
+    private static JsonObject parse(String json) {
+        return JsonParser.parseString(json).getAsJsonObject();
+    }
+
+    @Test
+    @DisplayName("缺失的键会被补进文件内容")
+    void mergeAddsMissingKeys() {
+        // target = 即将写盘的文件内容，defaults = 完整默认结构
+        JsonObject target = parse("{\"a\":1}");
+        JsonObject defaults = parse("{\"a\":1,\"b\":{\"c\":2,\"d\":3}}");
+
+        List<String> added = new ArrayList<>();
+        PdopnConfig.mergeDefaults(target, defaults, "", added);
+
+        // 补齐的记录应为「具体配置项」级（叶子键），日志才能直接告诉用户新增了什么
+        assertEquals(2, added.size(), "实际登记=" + added);
+        assertTrue(added.contains("b.c"), "实际登记=" + added);
+        assertTrue(added.contains("b.d"), "实际登记=" + added);
+        assertTrue(target.has("b"), "缺失的分组必须写进文件内容");
+        assertEquals(2, target.getAsJsonObject("b").get("c").getAsInt());
+        assertEquals(3, target.getAsJsonObject("b").get("d").getAsInt());
+    }
+
+    @Test
+    @DisplayName("用户已改过的值绝不被默认值覆盖")
+    void mergeNeverOverwritesExistingValues() {
+        // 用户把 a 改成 99、把 b.c 改成 42
+        JsonObject target = parse("{\"a\":99,\"b\":{\"c\":42}}");
+        JsonObject defaults = parse("{\"a\":1,\"b\":{\"c\":2}}");
+
+        List<String> added = new ArrayList<>();
+        PdopnConfig.mergeDefaults(target, defaults, "", added);
+
+        assertTrue(added.isEmpty(), "没有任何键缺失时不应报告补齐");
+        assertEquals(99, target.get("a").getAsInt(), "a 必须保留用户的 99");
+        assertEquals(42, target.getAsJsonObject("b").get("c").getAsInt(), "b.c 必须保留用户的 42");
+    }
+
+    @Test
+    @DisplayName("补齐缺失键的同时保留同分组内用户改过的值（核心场景）")
+    void mergeAddsNewKeysWhileKeepingUserValues() {
+        // 用户改了 maxValue，同时文件里缺少后来新增的降温项
+        JsonObject target = parse("{\"thirst\":{\"maxValue\":250.0}}");
+        JsonObject defaults = parse(
+            "{\"thirst\":{\"maxValue\":100.0,\"pureWaterBottleCooling\":6.0,\"coolantDurationTicks\":200}}");
+
+        List<String> added = new ArrayList<>();
+        PdopnConfig.mergeDefaults(target, defaults, "", added);
+
+        JsonObject thirst = target.getAsJsonObject("thirst");
+        assertEquals(250.0, thirst.get("maxValue").getAsDouble(), 1.0e-9,
+            "用户改过的 maxValue 不能被重置");
+        assertEquals(6.0, thirst.get("pureWaterBottleCooling").getAsDouble(), 1.0e-9,
+            "新增项应被补上");
+        assertEquals(200, thirst.get("coolantDurationTicks").getAsInt());
+        assertEquals(2, added.size(), "只应报告两个新增项");
+    }
+
+    @Test
+    @DisplayName("文件里显式写成 null 的项按缺失处理并补齐")
+    void mergeTreatsNullAsMissing() {
+        JsonObject target = parse("{\"entity\":null}");
+        JsonObject defaults = parse("{\"entity\":{\"whitelist\":[],\"blacklist\":[]}}");
+
+        List<String> added = new ArrayList<>();
+        PdopnConfig.mergeDefaults(target, defaults, "", added);
+
+        assertFalse(added.isEmpty());
+        assertTrue(target.getAsJsonObject("entity").has("whitelist"));
+        assertTrue(target.getAsJsonObject("entity").has("blacklist"));
+    }
+
+    @Test
+    @DisplayName("分组的类型被写错时以默认结构替换")
+    void mergeReplacesWrongTypedSection() {
+        JsonObject target = parse("{\"thirst\":5}");
+        JsonObject defaults = parse("{\"thirst\":{\"maxValue\":100.0}}");
+
+        List<String> added = new ArrayList<>();
+        PdopnConfig.mergeDefaults(target, defaults, "", added);
+
+        // 类型错误的分组被整体替换后，其子项按叶子键登记
+        assertTrue(added.contains("thirst.maxValue"),
+            "被替换分组的子项应被登记，实际=" + added);
+        assertTrue(target.get("thirst").isJsonObject(), "应以默认结构替换错误类型");
+        assertEquals(100.0, target.getAsJsonObject("thirst").get("maxValue").getAsDouble(), 1.0e-9);
+    }
+
+    @Test
+    @DisplayName("值相等的键不会被误报为补齐")
+    void mergeDoesNotReportUnchanged() {
+        JsonObject target = parse("{\"a\":1.0,\"b\":{\"c\":true}}");
+        JsonObject defaults = parse("{\"a\":1.0,\"b\":{\"c\":true}}");
+
+        List<String> added = new ArrayList<>();
+        PdopnConfig.mergeDefaults(target, defaults, "", added);
+
+        assertTrue(added.isEmpty(), "内容完全一致时不应报告任何补齐项");
+    }
+
+    @Test
+    @DisplayName("合并不会修改默认结构本身（避免跨调用污染）")
+    void mergeDoesNotMutateDefaults() {
+        JsonObject target = parse("{\"a\":1}");
+        JsonObject defaults = parse("{\"a\":1,\"b\":{\"c\":2}}");
+
+        PdopnConfig.mergeDefaults(target, defaults, "", new ArrayList<>());
+
+        assertTrue(target.has("b"));
+        assertFalse(defaults.getAsJsonObject("b").has("b"), "默认结构不应被写入自身");
     }
 }
