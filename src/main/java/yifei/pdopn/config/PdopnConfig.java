@@ -25,11 +25,28 @@ public class PdopnConfig {
      * 当前配置文件结构版本。
      * 用途：字段增删或改名后（Gson 会默默丢弃无法映射的字段）可以据此识别旧配置并迁移，
      * 而不是让玩家在升级模组后发现配置被重置且毫无提示。
+     *
+     * <p><b>每次往配置里新增字段都必须递增此值</b>，否则旧配置文件不会触发迁移与回写，
+     * 新字段虽然内存里存在（Gson 保留默认值）、但用户打开 pdopn.json 根本看不到。
+     *
+     * <p>版本历史：
+     * <ul>
+     *   <li>1 — 初始 temperature / thirst</li>
+     *   <li>2 — 新增 entity.whitelist / entity.blacklist</li>
+     *   <li>3 — 新增口渴降温相关项（*Cooling / coolantDurationTicks）</li>
+     * </ul>
      */
-    public static final int CURRENT_CONFIG_VERSION = 2;
+    public static final int CURRENT_CONFIG_VERSION = 3;
 
     /** 配置文件结构版本（由文件内容读入；缺失视为 0，即 v1 之前的旧配置） */
     public int configVersion = CURRENT_CONFIG_VERSION;
+
+    /**
+     * 是否需要把内存中的配置回写到文件。
+     * 载入到旧版本配置时置位，由主类在服务端首次 tick 时执行回写
+     * （那时才确定模组已真正装载，避免在服务端之外触发文件写入）。
+     */
+    private static boolean needsRewrite = false;
 
     /* ══════════ 温度系统配置 ══════════ */
     public TemperatureConfig temperature = new TemperatureConfig();
@@ -158,11 +175,13 @@ public class PdopnConfig {
             try (Reader reader = Files.newBufferedReader(configFile)) {
                 PdopnConfig config = GSON.fromJson(reader, PdopnConfig.class);
                 if (config != null) {
-                    boolean migrated = migrate(config);
-                    LOGGER.info("[PDoPN] Config loaded from {}", configFile);
-                    if (migrated) {
-                        // 迁移后立即回写，避免每次启动重复迁移
-                        save(config);
+                    int loadedVersion = config.configVersion;
+                    boolean changed = normalize(config);
+                    LOGGER.info("[PDoPN] Config loaded from {} (version {} -> {})",
+                        configFile, loadedVersion, config.configVersion);
+                    // 旧版本文件（或字段被写成 null）需要回写，否则新字段永远不出现在文件里
+                    if (changed || loadedVersion < CURRENT_CONFIG_VERSION) {
+                        needsRewrite = true;
                     }
                     return config;
                 }
@@ -178,30 +197,58 @@ public class PdopnConfig {
     }
 
     /**
-     * 旧配置结构迁移。
+     * 规范化配置对象：补齐缺失 / 被显式写成 null 的字段，并把版本号更新为当前版本。
      *
-     * @return true 表示发生了迁移、需要回写文件
+     * <p>Gson 对文件中不存在的字段会保留字段初始值，因此新字段在内存里总是可用的；
+     * 但用户的<b>文件</b>里依然缺少这些键。此方法负责把内存状态补齐到当前结构，
+     * 由调用方决定是否回写。
+     *
+     * @return true 表示确实做了填充（对象状态发生了变化）
      */
-    private static boolean migrate(PdopnConfig config) {
-        if (config.configVersion >= CURRENT_CONFIG_VERSION) return false;
+    static boolean normalize(PdopnConfig config) {
+        boolean changed = false;
 
-        LOGGER.info("[PDoPN] Migrating config from version {} to {}",
-            config.configVersion, CURRENT_CONFIG_VERSION);
+        if (config.temperature == null) {
+            config.temperature = new TemperatureConfig();
+            changed = true;
+        }
+        if (config.thirst == null) {
+            config.thirst = new ThirstConfig();
+            changed = true;
+        }
+        if (config.entity == null) {
+            config.entity = new EntityConfig();
+            changed = true;
+        }
+        if (config.entity.whitelist == null) {
+            config.entity.whitelist = new java.util.ArrayList<>();
+            changed = true;
+        }
+        if (config.entity.blacklist == null) {
+            config.entity.blacklist = new java.util.ArrayList<>();
+            changed = true;
+        }
 
-        // v0 / v1 → v2：补齐可能缺失的引用类型字段。
-        // Gson 对文件中不存在的字段会保留默认值，但显式写出的 null 会展成 null，
-        // 这里统一兜底，避免下游出现 NPE。
-        if (config.temperature == null) config.temperature = new TemperatureConfig();
-        if (config.thirst == null) config.thirst = new ThirstConfig();
-        if (config.entity == null) config.entity = new EntityConfig();
-        if (config.entity.whitelist == null) config.entity.whitelist = new java.util.ArrayList<>();
-        if (config.entity.blacklist == null) config.entity.blacklist = new java.util.ArrayList<>();
-
-        config.configVersion = CURRENT_CONFIG_VERSION;
-        return true;
+        if (config.configVersion != CURRENT_CONFIG_VERSION) {
+            config.configVersion = CURRENT_CONFIG_VERSION;
+            changed = true;
+        }
+        return changed;
     }
 
-    private static void save(PdopnConfig config) {
+    /**
+     * 是否有待回写的配置（载入到旧版本文件时为 true）。
+     * 由主类在服务端首次 tick 时查询，随后调用 {@link #save()} 完成回写。
+     */
+    public static boolean needsRewrite() {
+        return needsRewrite;
+    }
+
+    /**
+     * 把配置写入文件。
+     * 设为 public 以便主类在检测到旧版本文件时主动触发一次回写。
+     */
+    public static void save(PdopnConfig config) {
         Path configDir = FabricLoader.getInstance().getConfigDir().resolve("pdopn");
         Path configFile = configDir.resolve("pdopn.json");
         try {
@@ -209,6 +256,8 @@ public class PdopnConfig {
             try (Writer writer = Files.newBufferedWriter(configFile)) {
                 GSON.toJson(config, writer);
             }
+            // 已回写则不重复标记
+            needsRewrite = false;
             LOGGER.info("[PDoPN] Config saved to {}", configFile);
         } catch (IOException e) {
             LOGGER.warn("[PDoPN] Failed to save config: {}", e.getMessage());

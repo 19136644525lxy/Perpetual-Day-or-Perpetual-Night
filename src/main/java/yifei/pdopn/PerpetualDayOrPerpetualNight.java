@@ -27,6 +27,7 @@ import net.minecraft.world.GameRules;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import yifei.pdopn.command.PdopnCommand;
+import yifei.pdopn.config.PdopnConfig;
 import yifei.pdopn.entity.PdopnEntityModifier;
 import yifei.pdopn.hud.PdopnHudRenderer;
 import yifei.pdopn.mode.PdopnMode;
@@ -207,6 +208,14 @@ public class PerpetualDayOrPerpetualNight implements ModInitializer, PdopnComman
                 temperatureManager.setCurrentMode(persisted);
                 LOGGER.info("[PDoPN] 已从存档恢复模式：{}", persisted);
             }
+
+            // 载入到旧版本配置文件时回写一次，使新增字段真正出现在 pdopn.json 中。
+            // Gson 只在内存里保留默认值，不回写的话用户打开文件看不到新配置项。
+            if (PdopnConfig.needsRewrite()) {
+                LOGGER.info("[PDoPN] 检测到旧版本配置，正在回写并补充新增字段");
+                PdopnConfig.save(PdopnConfig.getInstance());
+            }
+
             globalDataLoaded = true;
         }
 
