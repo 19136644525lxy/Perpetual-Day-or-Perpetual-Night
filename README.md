@@ -298,7 +298,7 @@ Jump to the English introduction: [README_en.md](https://github.com/19136644525l
 
 | 配置项 | 默认值 | 说明 |
 |---|---|---|
-| `configVersion` | `2` | 配置文件结构版本，用于旧配置自动迁移 |
+| `configVersion` | `3` | 配置文件结构版本，用于旧配置自动迁移 |
 
 > 修改配置后可用 `/pdopn reload` 立即生效，无需重启服务器。
 > 若文件中出现 `configVersion` 小于当前版本，模组会自动补齐新增字段并回写文件。

@@ -305,7 +305,7 @@ All concrete temperature / thirst numbers live here.
 
 | Option | Default | Description |
 |---|---|---|
-| `configVersion` | `2` | Config schema version, used for automatic migration |
+| `configVersion` | `3` | Config schema version, used for automatic migration |
 
 > Use `/pdopn reload` to apply config changes without restarting the server.
 > If `configVersion` in the file is older than the current one, the mod fills in new fields and writes the file back.
